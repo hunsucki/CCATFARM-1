@@ -1,7 +1,7 @@
 const TOKEN_KEY = 'ccatfarm_token'
 const USER_KEY = 'ccatfarm_user'
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 export interface User {
   id: number

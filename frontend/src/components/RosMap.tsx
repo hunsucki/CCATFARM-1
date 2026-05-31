@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Check, Crosshair, X, Grid3X3 } from 'lucide-react'
+import { Check, Crosshair, X, Grid3X3, Route } from 'lucide-react'
 import type { UseRosReturn } from '../hooks/useRos'
 import { TOPICS } from '../config/rosTopics'
 import { ZONES, generateZonesFromMap, getZoneFromPose, type ZoneBounds } from '../utils/zoneMap'
@@ -29,6 +29,12 @@ interface PoseEstimate {
   yaw: number
 }
 
+interface MissionRoutePoint {
+  x: number
+  y: number
+  label: string
+}
+
 type InitialPoseStatus =
   | { state: 'idle' }
   | { state: 'pending'; x: number; y: number; sentAt: number }
@@ -50,6 +56,133 @@ const INITIAL_POSE_COVARIANCE = [
   0, 0, 0, 0, 0, 0.06853892326654787,
 ]
 
+const isPointLike = (value: unknown): value is { x: number; y: number } => (
+  typeof value === 'object' &&
+  value !== null &&
+  typeof (value as { x?: unknown }).x === 'number' &&
+  typeof (value as { y?: unknown }).y === 'number'
+)
+
+const normalizePoint = (value: unknown): { x: number; y: number } | null => {
+  if (isPointLike(value)) return { x: value.x, y: value.y }
+
+  if (Array.isArray(value) && value.length >= 2) {
+    const x = Number(value[0])
+    const y = Number(value[1])
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const obj = value as Record<string, unknown>
+    const nested = obj.position ?? obj.pose ?? obj.point ?? obj.coordinate ?? obj.coordinates
+    if (nested && nested !== value) return normalizePoint(nested)
+  }
+
+  return null
+}
+
+const collectPoints = (value: unknown): { x: number; y: number }[] => {
+  if (!Array.isArray(value)) return []
+  return value.map(normalizePoint).filter((point): point is { x: number; y: number } => point !== null)
+}
+
+const parseMissionRoutePoints = (
+  raw: string,
+  fallbackHome: { x: number; y: number } | null
+): MissionRoutePoint[] => {
+  const makeRoute = (
+    patrolHome: { x: number; y: number } | null,
+    points: { x: number; y: number }[],
+    dockHome: { x: number; y: number } | null
+  ) => {
+    const route: MissionRoutePoint[] = []
+    const start = patrolHome ?? fallbackHome
+    const end = dockHome ?? patrolHome ?? fallbackHome
+
+    if (start) route.push({ ...start, label: 'HOME(P)' })
+    points.forEach((point, index) => route.push({ ...point, label: `P${index + 1}` }))
+    if (end) route.push({ ...end, label: 'HOME(D)' })
+
+    return route
+  }
+
+  const text = raw.trim()
+  if (!text) return []
+
+  try {
+    const parsed = JSON.parse(text)
+    const obj = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+
+    if (obj) {
+      const navigationSequence = collectPoints(obj.navigation_sequence)
+      if (navigationSequence.length > 0) {
+        return navigationSequence.map((point, index) => {
+          const item = Array.isArray(obj.navigation_sequence) ? obj.navigation_sequence[index] : null
+          const name = item && typeof item === 'object' && typeof (item as Record<string, unknown>).name === 'string'
+            ? (item as Record<string, string>).name
+            : `P${index + 1}`
+
+          return {
+            ...point,
+            label: name === 'HOME_TO_PATROL'
+              ? 'HOME(P)'
+              : name === 'HOME_TO_DOCK'
+                ? 'HOME(D)'
+                : name.toUpperCase(),
+          }
+        })
+      }
+
+      const homeObj = obj.home && typeof obj.home === 'object' ? obj.home as Record<string, unknown> : null
+      const patrolHome =
+        normalizePoint(obj.patrol_home) ??
+        normalizePoint(obj.patrolHome) ??
+        normalizePoint(obj.home_patrol) ??
+        normalizePoint(obj.homePatrol) ??
+        normalizePoint(obj.home_to_patrol_pose) ??
+        normalizePoint(obj.homeToPatrolPose) ??
+        normalizePoint(homeObj?.patrol) ??
+        normalizePoint(homeObj?.start) ??
+        normalizePoint(obj.start) ??
+        normalizePoint(obj.home)
+
+      const dockHome =
+        normalizePoint(obj.dock_home) ??
+        normalizePoint(obj.dockHome) ??
+        normalizePoint(obj.home_dock) ??
+        normalizePoint(obj.homeDock) ??
+        normalizePoint(obj.home_to_dock_pose) ??
+        normalizePoint(obj.homeToDockPose) ??
+        normalizePoint(homeObj?.dock) ??
+        normalizePoint(homeObj?.end) ??
+        normalizePoint(obj.end) ??
+        normalizePoint(obj.dock)
+
+      const points =
+        collectPoints(obj.points).length > 0 ? collectPoints(obj.points) :
+        collectPoints(obj.route).length > 0 ? collectPoints(obj.route) :
+        collectPoints(obj.waypoints).length > 0 ? collectPoints(obj.waypoints) :
+        collectPoints(obj.patrol_points).length > 0 ? collectPoints(obj.patrol_points) :
+        collectPoints(obj.patrolPoints).length > 0 ? collectPoints(obj.patrolPoints) :
+        collectPoints(obj.mission_points).length > 0 ? collectPoints(obj.mission_points) :
+        []
+
+      return makeRoute(patrolHome, points, dockHome)
+    }
+
+    const points = collectPoints(parsed)
+    return makeRoute(null, points, null)
+  } catch {
+    const pairs = Array.from(text.matchAll(/(-?\d+(?:\.\d+)?)\s*[,:\s]\s*(-?\d+(?:\.\d+)?)/g))
+      .map((match) => ({ x: Number(match[1]), y: Number(match[2]) }))
+      .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+
+    return makeRoute(null, pairs, null)
+  }
+}
+
 export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChange }: RosMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mapDataRef = useRef<ImageData | null>(null)
@@ -65,6 +198,9 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
   const [poseDraft, setPoseDraft] = useState<PoseEstimate | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
   const [initialPoseStatus, setInitialPoseStatus] = useState<InitialPoseStatus>({ state: 'idle' })
+  const [missionRouteVisible, setMissionRouteVisible] = useState(false)
+  const [missionRoutePoints, setMissionRoutePoints] = useState<MissionRoutePoint[]>([])
+  const [missionRouteRaw, setMissionRouteRaw] = useState('')
 
   const drawRobot = useCallback((ctx: CanvasRenderingContext2D, pose: { x: number; y: number }, meta: MapMeta) => {
     const px = (pose.x - meta.origin.x) / meta.resolution
@@ -324,6 +460,72 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
 
   }, [activeZones, patrolRoute, worldToCanvas])
 
+  const drawMissionRoutePoints = useCallback((ctx: CanvasRenderingContext2D, meta: MapMeta) => {
+    if (!missionRouteVisible || missionRoutePoints.length === 0) return
+
+    const points = missionRoutePoints.map((point) => ({
+      ...worldToCanvas(point, meta),
+      label: point.label,
+    }))
+
+    if (points.length > 1) {
+      ctx.save()
+      ctx.strokeStyle = 'rgba(255, 214, 10, 0.18)'
+      ctx.lineWidth = 9
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.beginPath()
+      ctx.moveTo(points[0].x, points[0].y)
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y)
+      ctx.stroke()
+
+      ctx.strokeStyle = '#ffd60a'
+      ctx.lineWidth = 2.5
+      ctx.shadowColor = '#ffd60a'
+      ctx.shadowBlur = 8
+      ctx.beginPath()
+      ctx.moveTo(points[0].x, points[0].y)
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y)
+      ctx.stroke()
+      ctx.shadowBlur = 0
+      ctx.restore()
+    }
+
+    points.forEach((point, index) => {
+      const isStart = index === 0
+      const isEnd = index === points.length - 1
+      const markerColor = isStart ? '#00e676' : isEnd ? '#ff3b30' : '#ffd60a'
+      const textColor = isEnd ? '#fff' : '#000'
+      const number = String(index + 1)
+
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(point.x, point.y, 10, 0, Math.PI * 2)
+      ctx.fillStyle = markerColor
+      ctx.shadowColor = markerColor
+      ctx.shadowBlur = 10
+      ctx.fill()
+      ctx.shadowBlur = 0
+      ctx.lineWidth = 2
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)'
+      ctx.stroke()
+
+      ctx.font = '800 9px -apple-system, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = textColor
+      ctx.fillText(number, point.x, point.y)
+
+      ctx.font = '700 8px -apple-system, sans-serif'
+      ctx.textBaseline = 'bottom'
+      ctx.fillStyle = markerColor
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.9)'
+      ctx.shadowBlur = 3
+      ctx.fillText(point.label, point.x, point.y - 13)
+      ctx.restore()
+    })
+  }, [missionRoutePoints, missionRouteVisible, worldToCanvas])
+
   const redrawMap = useCallback(() => {
     if (!mapMeta || !canvasRef.current || !mapDataRef.current) return
     const ctx = canvasRef.current.getContext('2d')!
@@ -346,6 +548,7 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
 
     drawZoneOverlays(ctx, mapMeta)
     drawPatrolRoute(ctx, mapMeta, robotPose ?? null)
+    drawMissionRoutePoints(ctx, mapMeta)
 
     // Home Zone 마커 (최초 연결 위치)
     if (stationPos) {
@@ -407,7 +610,7 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       ctx.textAlign = 'right'
       ctx.fillText(`(${xMax}, ${yMin})`, br.x - 3, br.y - 3)
     }
-  }, [drawPoseEstimate, drawRobot, drawZoneOverlays, drawPatrolRoute, mapMeta, poseDraft, robotPose, stationPos, zoneDraft, worldToCanvas])
+  }, [drawMissionRoutePoints, drawPoseEstimate, drawRobot, drawZoneOverlays, drawPatrolRoute, mapMeta, poseDraft, robotPose, stationPos, zoneDraft, worldToCanvas])
 
   useEffect(() => {
     if (!ros || status !== 'connected') {
@@ -415,6 +618,8 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       // 연결 끊기면 Home Zone 초기화 (재연결 시 새로 캡처)
       stationCaptured.current = false
       setStationPos(null)
+      setMissionRouteRaw('')
+      setMissionRoutePoints([])
       return
     }
     setConnected(true)
@@ -476,6 +681,32 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
 
     return () => mapTopic.unsubscribe()
   }, [ros, status])
+
+  useEffect(() => {
+    if (!ros || status !== 'connected') return
+
+    const routeTopic = new ROSLIB.Topic({
+      ros,
+      name: TOPICS.MISSION_ROUTE_POINTS.name,
+      messageType: TOPICS.MISSION_ROUTE_POINTS.messageType,
+      queue_length: 1,
+    } as any)
+
+    routeTopic.subscribe((message: any) => {
+      const data = typeof message?.data === 'string'
+        ? message.data
+        : typeof message?.msg?.data === 'string'
+          ? message.msg.data
+          : ''
+      setMissionRouteRaw(data)
+    })
+
+    return () => routeTopic.unsubscribe()
+  }, [ros, status])
+
+  useEffect(() => {
+    setMissionRoutePoints(parseMissionRoutePoints(missionRouteRaw, stationPos))
+  }, [missionRouteRaw, stationPos])
 
   useEffect(() => {
     redrawMap()
@@ -711,6 +942,22 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
             <Grid3X3 size={15} />
             <span>Zone 설정</span>
           </button>
+          <button
+            type="button"
+            className={`ros-map-tool ${missionRouteVisible ? 'active' : ''}`}
+            onClick={() => {
+              setMissionRouteVisible((current) => !current)
+              setPoseMode(false)
+              setZoneEditMode(false)
+              setPoseDraft(null)
+              setZoneDraft(null)
+              setDragStart(null)
+            }}
+            title="/mission_route_points 표시"
+          >
+            <Route size={15} />
+            <span>Route</span>
+          </button>
           {poseMode && (
             <>
               <button
@@ -758,6 +1005,11 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
           )}
         </div>
       )}
+      {connected && missionRouteVisible && missionRoutePoints.length === 0 && !poseMode && !zoneEditMode && (
+        <div className="ros-map-pose-status pending">
+          /mission_route_points 수신 대기 중...
+        </div>
+      )}
       {connected && initialPoseStatus.state !== 'idle' && !poseMode && (
         <div className={`ros-map-pose-status ${initialPoseStatus.state}`}>
           {initialPoseStatus.state === 'pending' && '2D Pose 전송됨. AMCL 위치 갱신 확인 중...'}
@@ -773,6 +1025,11 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       {connected && stationPos && !zoneEditMode && (
         <div className="home-zone-badge">
           HOME: ({stationPos.x.toFixed(1)}, {stationPos.y.toFixed(1)})
+        </div>
+      )}
+      {connected && missionRouteVisible && missionRoutePoints.length > 0 && (
+        <div className="mission-route-badge">
+          ROUTE: {missionRoutePoints.length} POINTS
         </div>
       )}
       {connected && mapMeta && zoneEditMode && (

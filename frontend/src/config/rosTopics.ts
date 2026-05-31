@@ -57,6 +57,14 @@ export const TOPICS = {
     description: '지도 위에서 지정한 초기 위치와 방향',
   },
 
+  // 미션 순회 포인트 (구독) — home(patrol) -> points -> home(dock) 경로 표시
+  MISSION_ROUTE_POINTS: {
+    name: '/mission_route_points',
+    messageType: 'std_msgs/String',
+    direction: 'subscribe' as const,
+    description: '지도 위에 표시할 순회 포인트 목록',
+  },
+
   // TF 변환 (구독) — 좌표계 변환 정보
   TF: {
     name: '/tf',

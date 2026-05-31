@@ -190,3 +190,66 @@ ros2 topic echo /initialpose --once
 # rosbridge가 실제로 구독 중인 토픽 확인
 ros2 node info /rosbridge_websocket
 ```
+
+## 0531 Update
+
+### 순회 포인트 지도 표시
+
+- Map 화면의 `RosMap` 툴바에 `Route` 버튼을 추가함
+- rosbridge를 통해 `/mission_route_points` 토픽을 구독함
+- 토픽 타입은 `std_msgs/String`이며, `data` 필드의 JSON 문자열을 파싱해 지도 위에 순회 경로를 표시함
+- `navigation_sequence`가 있으면 해당 배열을 우선 사용해 순서를 그대로 표시함
+- 표시 순서는 `HOME_TO_PATROL` -> `patrol_points` -> `HOME_TO_DOCK`
+- 지도 위에는 순서대로 숫자 마커를 표시하고, 시작점은 `HOME(P)`, 종료점은 `HOME(D)` 라벨로 구분함
+- `navigation_sequence`가 없는 경우에는 `home_to_patrol_pose`, `patrol_points`, `home_to_dock_pose`를 조합해 표시함
+
+예상 메시지 형식:
+
+```json
+{
+  "frame_id": "map",
+  "home_to_patrol_pose": {
+    "x": -0.265,
+    "y": 4.405,
+    "yaw": -1.5708
+  },
+  "home_to_dock_pose": {
+    "x": -0.265,
+    "y": 4.405,
+    "yaw": 1.0472
+  },
+  "patrol_points": [
+    { "name": "point_1", "x": -0.165, "y": -0.145 },
+    { "name": "point_2", "x": 3.735, "y": -0.045 }
+  ],
+  "navigation_sequence": [
+    { "name": "HOME_TO_PATROL", "type": "home", "x": -0.265, "y": 4.405, "yaw": -1.5708 },
+    { "name": "point_1", "type": "patrol", "x": -0.165, "y": -0.145, "yaw": 0.0256 },
+    { "name": "point_2", "type": "patrol", "x": 3.735, "y": -0.045, "yaw": 3.1159 },
+    { "name": "HOME_TO_DOCK", "type": "home", "x": -0.265, "y": 4.405, "yaw": 1.0472 }
+  ]
+}
+```
+
+확인용 ROS 명령:
+
+```bash
+ros2 topic echo /mission_route_points --once
+```
+
+### Vite 개발 서버 프록시
+
+- `frontend/vite.config.ts`에 Vite 개발 서버 프록시 설정을 추가함
+- 프론트엔드에서 `/api`로 시작하는 요청을 `http://localhost:8000` 백엔드로 전달함
+- 개발 중 프론트 주소가 달라도 API 호출 경로를 `/api/...` 형태로 유지할 수 있음
+
+```ts
+server: {
+  proxy: {
+    '/api': {
+      target: 'http://localhost:8000',
+      changeOrigin: true,
+    },
+  },
+}
+```
