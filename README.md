@@ -190,3 +190,79 @@ ros2 topic echo /initialpose --once
 # rosbridge가 실제로 구독 중인 토픽 확인
 ros2 node info /rosbridge_websocket
 ```
+
+## update_0715
+
+### drive_manager 웹 계약 반영
+
+- 웹 앱의 주행 연동 기준을 `drive_manager`의 rosbridge 계약으로 변경했습니다.
+- 지도와 Zone 판별 위치 입력을 `/amcl_pose`에서 `/robot_pose`로 변경했습니다. 위치 출처는 `/robot_pose_status`의 `AMCL`, `DOCKED`, `DOCKED_ASSUMED`를 화면에 함께 표시합니다.
+- `/web_teleop/status`, `/web_teleop/active`, `/robot_status`, `/robot_pose_status`, `/mission_route_points`를 구독하는 공통 상태 훅을 추가했습니다.
+- rosbridge 연결이 끊기면 2초 뒤 자동 재연결하고, 연결 복구 시 publisher와 subscriber를 다시 생성하도록 변경했습니다.
+
+| 방향 | 토픽 | 타입 | 적용 내용 |
+|------|------|------|----------|
+| Web → ROS | `/robot_command` | `std_msgs/msg/String` | `START`, `HOME`, `STOP`, `ESTOP`, `RESET` 지원 |
+| Web → ROS | `/cmd_vel_web_safe` | `geometry_msgs/msg/Twist` | 일반 수동 조종, 웹 제한 0.15 m/s·0.40 rad/s |
+| Web → ROS | `/cmd_vel_web_force` | `geometry_msgs/msg/Twist` | 탈출용 저속 조종, 웹 제한 0.08 m/s·0.25 rad/s |
+| Web → ROS | `/initialpose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | 정지 확인 후 지도 위치와 yaw 재설정 |
+| ROS → Web | `/web_teleop/status` | `std_msgs/msg/String` | `DISABLED`, `TRANSITIONING_*`, `SAFE`, `FORCE`, `ERROR ...` 표시 |
+| ROS → Web | `/web_teleop/active` | `std_msgs/msg/Bool` | START/HOME 및 2D Pose 상호잠금 |
+| ROS → Web | `/robot_status` | `std_msgs/msg/String` | 미션 상태와 명령 결과 표시 |
+| ROS → Web | `/robot_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | 지도 위치와 로봇 전방 방향 표시 |
+| ROS → Web | `/robot_pose_status` | `std_msgs/msg/String` | 현재 위치 출처 표시 |
+| ROS → Web | `/mission_route_points` | `std_msgs/msg/String` | 경로 JSON 구독 및 파싱 오류 표시 |
+
+### SAFE 및 FORCE 수동 조종
+
+- 기존 `EMERGENCY → /cmd_vel` 수동 조종 구조를 제거하고, 비상 정지와 수동 조종을 별도 기능으로 분리했습니다.
+- `Manual Ctrl` 버튼을 짧게 누르면 SAFE 수동 조종 화면이 열립니다.
+- `Manual Ctrl` 버튼을 약 3초 동안 길게 누르면 진행 표시줄과 함께 FORCE가 준비됩니다.
+- FORCE는 상시 모드로 남지 않습니다. 준비 후 **다음 한 번의 조이스틱 조작만** `/cmd_vel_web_force`로 보내며, 손을 떼는 즉시 0 속도를 발행하고 SAFE로 자동 복귀합니다.
+- 조이스틱을 누르는 동안 최신 Twist를 15 Hz로 반복 발행합니다. `pointerup`, `pointercancel`, `pointerleave`, 브라우저 blur, 탭 숨김, 연결 종료 시 송신을 중단하고 가능한 경우 0 속도를 한 번 발행합니다.
+- 서버 상태가 `ERROR ...`이면 로컬 송신 루프를 즉시 중단하고 FORCE를 자동 재시도하지 않습니다.
+- FORCE 화면은 붉은 경고 상태로 표시하며 카메라 확인과 저속 1회 조작을 안내합니다. 사람, 계단, 낙하 위험이 있는 곳에서는 사용하지 마십시오.
+
+### 명령 상호잠금과 비상 정지
+
+- `/web_teleop/active`를 아직 받지 못했거나 값이 `true`이면 START/HOME을 비활성화합니다.
+- 조이스틱에서 손을 뗀 직후 바로 HOME을 보내지 말고, 서버 watchdog 처리 후 `active=false`가 표시될 때까지 기다려야 합니다.
+- Map 화면의 `EMERGENCY`는 `ESTOP`을 발행하고 수동 송신을 즉시 중단합니다. 비상 정지 후 같은 버튼의 `RESET`을 눌러 latch 해제 명령을 보낼 수 있습니다.
+- 수동 복구 뒤에는 START가 아니라 HOME을 사용합니다. 현재 START는 도킹 위치 출발 전용 시퀀스입니다.
+
+### 2D Pose Estimate 변경
+
+- `/web_teleop/active=false`인 경우에만 2D Pose 버튼과 `/initialpose` 발행을 허용합니다.
+- 위치 출처가 `DOCKED` 또는 `DOCKED_ASSUMED`이면 2D Pose를 차단하고 다음 START의 자동 초기화를 사용하도록 안내합니다.
+- 공분산은 x/y 표준편차 0.25 m, yaw 표준편차 15도 기준으로 설정했습니다.
+- `/initialpose` 발행 이후에 실제로 새로 수신한 `/robot_pose`만 확인에 사용합니다. 기존 캐시 위치는 성공으로 처리하지 않습니다.
+- 지도 마커에 `/robot_pose` quaternion으로 계산한 yaw 방향 화살표를 추가했습니다. Pose 전송 직후 HOME을 자동 실행하지 않으므로 운영자가 새 위치와 방향을 확인한 뒤 HOME을 눌러야 합니다.
+
+### 주요 변경 파일
+
+- `frontend/src/hooks/useWebTeleop.ts`: SAFE/FORCE publisher, 15 Hz 송신 루프, 정지 처리 및 웹 속도 제한
+- `frontend/src/hooks/useDriveManagerStatus.ts`: drive_manager 상태·위치 출처·경로 subscriber
+- `frontend/src/hooks/useRos.ts`: rosbridge 2초 자동 재연결
+- `frontend/src/hooks/useRobotCommand.ts`: 명령 타입 확장과 START/HOME 상호잠금
+- `frontend/src/pages/Map.tsx`: 3초 FORCE 준비, 1회 조작, 상태 UI, ESTOP/RESET, `/robot_pose` 적용
+- `frontend/src/pages/Home.tsx`: `/robot_pose` 및 drive_manager 상태 적용, START/HOME 상호잠금
+- `frontend/src/components/RosMap.tsx`: 2D Pose 제약, 새 위치 확인, 위치 출처 처리와 방향 표시
+- `frontend/src/components/Joystick.tsx`: 누름 시작·해제·취소·이탈 이벤트 처리
+- `frontend/src/config/rosTopics.ts`: drive_manager 웹 계약 토픽 정의
+
+### 확인 방법
+
+```bash
+cd frontend
+npm run build
+
+# 서버 상태와 웹 송신 확인
+ros2 topic echo /web_teleop/status
+ros2 topic echo /web_teleop/active
+ros2 topic hz /cmd_vel_web_safe
+ros2 topic hz /cmd_vel_web_force
+ros2 topic echo /robot_pose
+ros2 topic echo /robot_pose_status
+```
+
+`npm run build`로 TypeScript 및 Vite 프로덕션 빌드를 확인했습니다. 현재 `npm run lint`는 프로젝트 devDependency에 `eslint-plugin-react-hooks`가 없어 ESLint 설정 로딩 단계에서 중단되므로, 린트를 사용하려면 해당 패키지를 먼저 추가해야 합니다.

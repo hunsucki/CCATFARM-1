@@ -133,6 +133,8 @@ export default function Joystick({ onMove, onStop, disabled = false }: JoystickP
     const pos = getPos(e)
     stickPos.current = pos
     draw(pos.x, pos.y)
+    const norm = Math.sqrt(pos.x * pos.x + pos.y * pos.y) / MAX_DIST
+    onMove(-(pos.y / MAX_DIST) * norm, -(pos.x / MAX_DIST) * norm)
   }
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -172,6 +174,7 @@ export default function Joystick({ onMove, onStop, disabled = false }: JoystickP
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onPointerLeave={handlePointerUp}
     />
   )
 }

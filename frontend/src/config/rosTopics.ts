@@ -9,12 +9,20 @@
 // 1. 주행 제어 (Navigation)
 // ═══════════════════════════════════════════════
 export const TOPICS = {
-  // 로봇 속도 명령 (퍼블리시) — 조이스틱 수동 제어 시 사용
-  CMD_VEL: {
-    name: '/cmd_vel',
+  // 충돌 보호 경로를 사용하는 기본 웹 수동 조종
+  CMD_VEL_WEB_SAFE: {
+    name: '/cmd_vel_web_safe',
     messageType: 'geometry_msgs/msg/Twist',
     direction: 'publish' as const,
-    description: '로봇 선속도/각속도 명령',
+    description: 'collision monitor를 통과하는 웹 수동 조종 명령',
+  },
+
+  // collision monitor를 우회하는 저속 탈출 전용 수동 조종
+  CMD_VEL_WEB_FORCE: {
+    name: '/cmd_vel_web_force',
+    messageType: 'geometry_msgs/msg/Twist',
+    direction: 'publish' as const,
+    description: 'Nav2 PAUSE 확인 후 사용하는 저속 force 명령',
   },
 
   // 로봇 상위 명령 (퍼블리시) — START/HOME/ESTOP
@@ -47,6 +55,49 @@ export const TOPICS = {
     messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
     direction: 'subscribe' as const,
     description: 'AMCL 기반 로봇 위치 추정',
+  },
+
+  // drive_manager가 제공하는 현재 위치의 단일 입력
+  ROBOT_POSE: {
+    name: '/robot_pose',
+    messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
+    direction: 'subscribe' as const,
+    description: 'AMCL 또는 도킹 고정 위치를 통합한 로봇 위치',
+  },
+
+  ROBOT_POSE_STATUS: {
+    name: '/robot_pose_status',
+    messageType: 'std_msgs/msg/String',
+    direction: 'subscribe' as const,
+    description: '로봇 위치 출처 (AMCL, DOCKED, DOCKED_ASSUMED)',
+  },
+
+  WEB_TELEOP_STATUS: {
+    name: '/web_teleop/status',
+    messageType: 'std_msgs/msg/String',
+    direction: 'subscribe' as const,
+    description: '웹 수동 조종 전환 및 오류 상태',
+  },
+
+  WEB_TELEOP_ACTIVE: {
+    name: '/web_teleop/active',
+    messageType: 'std_msgs/msg/Bool',
+    direction: 'subscribe' as const,
+    description: '수동 조종 또는 전환 진행 여부',
+  },
+
+  ROBOT_STATUS: {
+    name: '/robot_status',
+    messageType: 'std_msgs/msg/String',
+    direction: 'subscribe' as const,
+    description: '미션 상태 및 명령 처리 결과',
+  },
+
+  MISSION_ROUTE_POINTS: {
+    name: '/mission_route_points',
+    messageType: 'std_msgs/msg/String',
+    direction: 'subscribe' as const,
+    description: 'HOME/순회 좌표와 실제 주행 순서 JSON',
   },
 
   // 2D Pose Estimate (퍼블리시) — 초기 위치 지정
@@ -259,8 +310,9 @@ export const TOPICS = {
 // ┌─────────────────┬──────────────────────────────────────────┬──────────┐
 // │ 기능             │ 토픽                                      │ 용도      │
 // ├─────────────────┼──────────────────────────────────────────┼──────────┤
-// │ 로봇 위치        │ /odom                                    │ Zone 판별 │
-// │ 수동 제어        │ /cmd_vel                                 │ 조이스틱   │
+// │ 로봇 위치        │ /robot_pose                              │ 지도/Zone │
+// │ 기본 수동 제어   │ /cmd_vel_web_safe                        │ 조이스틱   │
+// │ 탈출 수동 제어   │ /cmd_vel_web_force                       │ 저속 FORCE │
 // │ 배터리 잔량      │ /battery_state                           │ SOC 표시  │
 // │ 배터리 전압      │ /sk120/voltage_out                       │ 상세 모니터│
 // │ 카메라 스트리밍   │ /camera/camera/color/image_raw/compressed│ 영상 표시  │

@@ -16,7 +16,11 @@ interface MapMeta {
 interface RosMapProps {
   ros: UseRosReturn['ros']
   status: UseRosReturn['status']
-  robotPose?: { x: number; y: number } | null
+  robotPose?: { x: number; y: number; yaw?: number; receivedAt?: number } | null
+  /** drive_manager 위치 출처 (AMCL, DOCKED, DOCKED_ASSUMED) */
+  robotPoseSource?: string
+  /** true/unknown일 때 2D Pose Estimate를 차단 */
+  teleopActive?: boolean | null
   /** 순회 경로 (Zone name 배열, 예: ['Zone A', 'Zone B']) */
   patrolRoute?: string[]
   /** 로봇이 Zone을 변경했을 때 콜백 */
@@ -42,15 +46,23 @@ const COLOR_UNKNOWN = [6, 12, 24]        // 더 어두운 (미탐색)
 const MAP_THROTTLE_MS = Number(import.meta.env.VITE_MAP_THROTTLE_MS ?? 1000)
 
 const INITIAL_POSE_COVARIANCE = [
-  0.25, 0, 0, 0, 0, 0,
-  0, 0.25, 0, 0, 0, 0,
+  0.0625, 0, 0, 0, 0, 0,
+  0, 0.0625, 0, 0, 0, 0,
   0, 0, 0, 0, 0, 0,
   0, 0, 0, 0, 0, 0,
   0, 0, 0, 0, 0, 0,
   0, 0, 0, 0, 0, 0.06853892326654787,
 ]
 
-export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChange }: RosMapProps) {
+export default function RosMap({
+  ros,
+  status,
+  robotPose,
+  robotPoseSource = 'UNKNOWN',
+  teleopActive = null,
+  patrolRoute,
+  onZoneChange,
+}: RosMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mapDataRef = useRef<ImageData | null>(null)
   const [mapMeta, setMapMeta] = useState<MapMeta | null>(null)
@@ -66,12 +78,28 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
   const [initialPoseStatus, setInitialPoseStatus] = useState<InitialPoseStatus>({ state: 'idle' })
 
-  const drawRobot = useCallback((ctx: CanvasRenderingContext2D, pose: { x: number; y: number }, meta: MapMeta) => {
+  const drawRobot = useCallback((ctx: CanvasRenderingContext2D, pose: { x: number; y: number; yaw?: number }, meta: MapMeta) => {
     const px = (pose.x - meta.origin.x) / meta.resolution
     const py = meta.height - (pose.y - meta.origin.y) / meta.resolution
 
     ctx.save()
     ctx.translate(px, py)
+
+    // /robot_pose의 quaternion에서 계산한 전방 방향
+    if (typeof pose.yaw === 'number') {
+      ctx.save()
+      ctx.rotate(-pose.yaw)
+      ctx.beginPath()
+      ctx.moveTo(5, 0)
+      ctx.lineTo(23, 0)
+      ctx.lineTo(17, -5)
+      ctx.moveTo(23, 0)
+      ctx.lineTo(17, 5)
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.restore()
+    }
 
     // 외부 펄스 링 (라임 글로우)
     ctx.beginPath()
@@ -522,6 +550,7 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
 
   useEffect(() => {
     if (initialPoseStatus.state !== 'pending' || !robotPose) return
+    if (!robotPose.receivedAt || robotPose.receivedAt <= initialPoseStatus.sentAt) return
 
     const dx = robotPose.x - initialPoseStatus.x
     const dy = robotPose.y - initialPoseStatus.y
@@ -535,6 +564,21 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       })
     }
   }, [initialPoseStatus, robotPose])
+
+  const dockedPose = robotPoseSource === 'DOCKED' || robotPoseSource === 'DOCKED_ASSUMED'
+  const canSetInitialPose = teleopActive === false && !dockedPose
+  const poseGuardMessage = dockedPose
+    ? '도킹 상태에서는 다음 START의 자동 초기화를 사용하세요.'
+    : teleopActive !== false
+      ? '수동 조종 해제(active=false)를 확인한 뒤 위치를 설정하세요.'
+      : null
+
+  useEffect(() => {
+    if (canSetInitialPose) return
+    setPoseMode(false)
+    setPoseDraft(null)
+    setDragStart(null)
+  }, [canSetInitialPose])
 
   useEffect(() => {
     if (initialPoseStatus.state !== 'pending') return
@@ -624,7 +668,7 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
   }
 
   const publishInitialPose = () => {
-    if (!ros || status !== 'connected' || !poseDraft) return
+    if (!ros || status !== 'connected' || !poseDraft || !canSetInitialPose) return
 
     const now = Date.now()
     const secs = Math.floor(now / 1000)
@@ -692,6 +736,7 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
               setPoseDraft(null)
               setDragStart(null)
             }}
+            disabled={!canSetInitialPose}
             title="2D Pose Estimate"
           >
             <Crosshair size={15} />
@@ -748,6 +793,9 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
           지도를 누른 뒤 진행 방향으로 드래그하세요
         </div>
       )}
+      {connected && poseGuardMessage && !poseMode && (
+        <div className="ros-map-pose-guard">{poseGuardMessage}</div>
+      )}
       {connected && zoneEditMode && (
         <div className="ros-map-pose-hint zone-edit-hint">
           드래그로 Zone 영역을 지정하세요 (좌표는 콘솔에 출력됩니다)
@@ -760,9 +808,9 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       )}
       {connected && initialPoseStatus.state !== 'idle' && !poseMode && (
         <div className={`ros-map-pose-status ${initialPoseStatus.state}`}>
-          {initialPoseStatus.state === 'pending' && '2D Pose 전송됨. AMCL 위치 갱신 확인 중...'}
-          {initialPoseStatus.state === 'confirmed' && 'AMCL 위치가 지정한 좌표 근처로 갱신됨'}
-          {initialPoseStatus.state === 'timeout' && 'AMCL 위치 갱신 확인 실패. /amcl_pose를 확인하세요'}
+          {initialPoseStatus.state === 'pending' && '2D Pose 전송됨. 새 /robot_pose 확인 중...'}
+          {initialPoseStatus.state === 'confirmed' && '새 /robot_pose가 지정한 좌표 근처로 갱신됨'}
+          {initialPoseStatus.state === 'timeout' && '위치 갱신 확인 실패. /robot_pose를 확인하세요'}
         </div>
       )}
       {connected && robotPose && (

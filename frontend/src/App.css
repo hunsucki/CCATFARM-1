@@ -306,10 +306,23 @@ body {
 }
 
 .mode-toggle button {
+  position: relative;
+  overflow: hidden;
   flex: 1; padding: 6px 4px; border: none;
   background: transparent; font-size: 10px; font-weight: 500;
   cursor: pointer; color: var(--text-muted); border-radius: 4px;
   transition: all 0.2s;
+}
+
+.mode-toggle button:disabled { opacity: 0.35; cursor: not-allowed; }
+.mode-toggle button.force {
+  background: var(--danger);
+  color: #fff;
+  animation: pulse-red 1s ease-in-out infinite;
+}
+.force-hold-progress {
+  position: absolute; left: 0; bottom: 0; height: 3px;
+  background: var(--danger); transition: width 0.05s linear;
 }
 
 .mode-toggle button.active {
@@ -322,6 +335,24 @@ body {
 
 /* ── Joystick ── */
 .dpad-card { display: flex; flex-direction: column; align-items: center; padding: 20px; }
+.dpad-card.force-card { border-color: rgba(255,59,48,0.65); box-shadow: 0 0 24px rgba(255,59,48,0.18); }
+.teleop-card-label { display: flex; align-items: center; justify-content: center; gap: 6px; text-align: center; }
+.force-card .teleop-card-label { color: var(--danger); }
+.teleop-help { margin-top: 8px; color: var(--text-muted); font-size: 10px; text-align: center; }
+.teleop-state { display: block; color: var(--accent); font: 700 11px var(--font-mono); word-break: break-word; }
+.teleop-state.force { color: var(--danger); }
+.teleop-active { display: block; margin-top: 3px; color: var(--text-muted); font: 9px var(--font-mono); }
+.control-message {
+  padding: 9px 10px; border: 1px solid rgba(0,229,255,0.25); border-radius: var(--radius);
+  background: var(--accent-dim); color: var(--text-secondary); font: 10px/1.4 var(--font-mono);
+}
+.control-message.danger { border-color: rgba(255,59,48,0.4); background: var(--danger-dim); color: #ff8580; }
+.robot-status-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text-muted); font: 9px var(--font-mono);
+}
+.robot-status-line strong { color: var(--text-secondary); text-align: right; }
 .dpad { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .dpad-mid { display: flex; align-items: center; gap: 4px; }
 
@@ -360,6 +391,7 @@ body {
 .pose-axis { display: block; font-size: 10px; font-weight: 700; color: var(--accent); margin-bottom: 2px; font-family: var(--font-mono); }
 .pose-val { font-size: 13px; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
 .pose-empty { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); padding: 8px 0; }
+.pose-source { margin-top: 8px; color: var(--text-muted); font: 9px var(--font-mono); text-align: right; }
 
 /* ── ROS Map — Tactical HUD ── */
 .ros-map-container {
@@ -396,6 +428,7 @@ body {
   font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
 }
 .ros-map-tool.active { background: var(--accent); color: #000; border-color: var(--accent); }
+.ros-map-tool:disabled { opacity: 0.35; cursor: not-allowed; }
 .ros-map-icon-btn { width: 28px; border-radius: 6px; }
 .ros-map-icon-btn.confirm { color: var(--success); border-color: rgba(0,230,118,0.3); }
 .ros-map-icon-btn:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -427,6 +460,16 @@ body {
 .ros-map-pose-status.pending { background: rgba(0,102,255,0.9); color: #fff; }
 .ros-map-pose-status.confirmed { background: rgba(0,230,118,0.9); color: #000; }
 .ros-map-pose-status.timeout { background: rgba(255,59,48,0.9); color: #fff; }
+.ros-map-pose-guard {
+  position: absolute; left: 8px; right: 8px; top: 42px; z-index: 3;
+  border: 1px solid rgba(255,152,0,0.35); border-radius: 6px;
+  background: rgba(8,18,36,0.88); color: #ffb74d;
+  padding: 5px 8px; font: 9px/1.35 var(--font-mono); text-align: center;
+}
+
+.alert-item.status-info {
+  background: var(--accent-dim); border-color: var(--border); color: var(--text-secondary);
+}
 
 .ros-map-coords {
   position: absolute; bottom: 8px; right: 8px;

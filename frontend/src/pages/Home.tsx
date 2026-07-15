@@ -4,6 +4,8 @@ import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
 import { useDiagnostics } from '../hooks/useDiagnostics'
 import { useRobotCommand } from '../hooks/useRobotCommand'
+import { useDriveManagerStatus } from '../hooks/useDriveManagerStatus'
+import { TOPICS } from '../config/rosTopics'
 import { getZoneName, ZONES } from '../utils/zoneMap'
 
 declare const ROSLIB: typeof import('roslib')
@@ -19,7 +21,9 @@ export default function Home() {
   const { ros, status } = useRos()
   const battery = useBattery(ros, status)
   const diagnostics = useDiagnostics(ros, status, 5)
-  const publishRobotCommand = useRobotCommand(ros, status)
+  const driveManager = useDriveManagerStatus(ros, status)
+  const publishRobotCommand = useRobotCommand(ros, status, driveManager.teleopActive)
+  const [commandError, setCommandError] = useState<string | null>(null)
   const [robot, setRobot] = useState<RobotState>({
     zone: '---',
     x: 0,
@@ -27,15 +31,17 @@ export default function Home() {
     isRunning: false,
   })
 
-  // /amcl_pose 구독 → Zone 판별
+  // drive_manager의 통합 /robot_pose 구독 → Zone 판별
   useEffect(() => {
     if (!ros || status !== 'connected') return
 
     const poseTopic = new ROSLIB.Topic({
       ros,
-      name: '/amcl_pose',
-      messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
-    })
+      name: TOPICS.ROBOT_POSE.name,
+      messageType: TOPICS.ROBOT_POSE.messageType,
+      throttle_rate: 100,
+      queue_length: 1,
+    } as any)
 
     poseTopic.subscribe((message: any) => {
       const pos = message.pose?.pose?.position
@@ -49,7 +55,15 @@ export default function Home() {
   }, [ros, status])
 
   const connected = status === 'connected'
+  const missionCommandEnabled = connected && driveManager.teleopActive === false
   const batteryLow = battery && battery.percentage <= 20
+
+  const sendMissionCommand = (command: 'START' | 'HOME') => {
+    setCommandError(null)
+    if (!publishRobotCommand(command)) {
+      setCommandError('수동 조종 해제(active=false)를 확인한 뒤 실행할 수 있습니다.')
+    }
+  }
 
   return (
     <div className="page">
@@ -67,7 +81,7 @@ export default function Home() {
               {robot.zone}
             </button>
             <button className={`ctrl-btn ${connected && robot.isRunning ? 'running' : ''}`}>
-              {connected ? (robot.isRunning ? 'RUNNING' : 'IDLE') : 'OFFLINE'}
+              {connected ? driveManager.robotStatus : 'OFFLINE'}
             </button>
             <button className={`ctrl-btn off ${batteryLow ? 'battery-low' : ''}`}>
               {battery ? (
@@ -93,15 +107,15 @@ export default function Home() {
           <div className="robot-actions">
             <button
               className="action-btn start"
-              onClick={() => publishRobotCommand('START')}
-              disabled={!connected}
+              onClick={() => sendMissionCommand('START')}
+              disabled={!missionCommandEnabled}
             >
               START
             </button>
             <button
               className="action-btn home"
-              onClick={() => publishRobotCommand('HOME')}
-              disabled={!connected}
+              onClick={() => sendMissionCommand('HOME')}
+              disabled={!missionCommandEnabled}
             >
               HOME
             </button>
@@ -122,6 +136,18 @@ export default function Home() {
             {!connected && (
               <div className="alert-item red">
                 ⚠ 로봇 연결 끊김 — rosbridge 확인 필요
+              </div>
+            )}
+            {commandError && <div className="alert-item warn">⚠ {commandError}</div>}
+            {driveManager.teleopActive && (
+              <div className="alert-item warn">⚠ 수동 조종 중 — START/HOME 잠금</div>
+            )}
+            {driveManager.teleopStatus.startsWith('ERROR') && (
+              <div className="alert-item red">❌ {driveManager.teleopStatus}</div>
+            )}
+            {connected && (
+              <div className="alert-item status-info">
+                위치: {driveManager.robotPoseSource} · TELEOP: {driveManager.teleopStatus}
               </div>
             )}
             {batteryLow && (
