@@ -266,3 +266,22 @@ ros2 topic echo /robot_pose_status
 ```
 
 `npm run build`로 TypeScript 및 Vite 프로덕션 빌드를 확인했습니다. 현재 `npm run lint`는 프로젝트 devDependency에 `eslint-plugin-react-hooks`가 없어 ESLint 설정 로딩 단계에서 중단되므로, 린트를 사용하려면 해당 패키지를 먼저 추가해야 합니다.
+
+### 웹 앱 통합 실행 스크립트
+
+기존 사용자 systemd 서비스 `ccatfarm-backend.service`, `ccatfarm-frontend.service`는 수동 실행 스크립트와 포트가 충돌하지 않도록 중지하고 자동 시작을 해제했습니다. 프로젝트 루트에서 다음 명령 하나로 백엔드와 프런트엔드를 함께 실행할 수 있습니다.
+
+```bash
+./run_server.sh
+```
+
+스크립트는 프런트엔드 의존성이 없으면 `npm ci`를 실행하고, 최신 프로덕션 빌드를 생성한 뒤 다음 서버를 시작합니다.
+
+- FastAPI 백엔드: `0.0.0.0:8001`
+- Vite preview 프런트엔드: `0.0.0.0:5173`
+
+실행 중인 터미널에서 `Ctrl+C`를 누르면 두 서버가 함께 종료됩니다. 포트와 Raspberry Pi 주소는 환경변수로 변경할 수 있습니다.
+
+```bash
+BACKEND_PORT=8001 FRONTEND_PORT=5173 RPI_IP=192.168.0.4 ./run_server.sh
+```

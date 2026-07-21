@@ -347,6 +347,26 @@ body {
   background: var(--accent-dim); color: var(--text-secondary); font: 10px/1.4 var(--font-mono);
 }
 .control-message.danger { border-color: rgba(255,59,48,0.4); background: var(--danger-dim); color: #ff8580; }
+.docking-interlock-card {
+  border-color: rgba(255,59,48,0.55);
+  background: linear-gradient(135deg, rgba(255,59,48,0.13), var(--bg-card));
+}
+.docking-interlock-title {
+  display: flex; align-items: center; gap: 7px;
+  color: var(--danger); font: 700 11px var(--font-mono);
+}
+.docking-interlock-card p {
+  margin: 8px 0; color: var(--text-secondary); font-size: 11px; line-height: 1.45;
+}
+.docking-interlock-state {
+  display: flex; flex-direction: column; gap: 3px;
+  margin-bottom: 9px; color: var(--text-muted); font: 9px var(--font-mono);
+}
+.docking-stop-button {
+  width: 100%; padding: 9px 10px; border: 1px solid rgba(255,59,48,0.6); border-radius: var(--radius);
+  background: var(--danger-dim); color: #ff8580; font-weight: 700; cursor: pointer;
+}
+.docking-stop-button:disabled { opacity: 0.4; cursor: not-allowed; }
 .robot-status-line {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius);

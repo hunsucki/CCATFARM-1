@@ -5,6 +5,7 @@ import { useBattery } from '../hooks/useBattery'
 import { useRobotCommand, type RobotCommand } from '../hooks/useRobotCommand'
 import { useDriveManagerStatus } from '../hooks/useDriveManagerStatus'
 import { useWebTeleop, type TeleopMode } from '../hooks/useWebTeleop'
+import { useRobotMotion } from '../hooks/useRobotMotion'
 import { TOPICS } from '../config/rosTopics'
 import { recordZoneEntry, startNewSession, getCurrentSessionRoute } from '../utils/patrolStorage'
 import CameraStream from '../components/CameraStream'
@@ -31,17 +32,30 @@ function yawFromQuaternion(orientation: any) {
   return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 }
 
+function robotStatusCode(status: string) {
+  return status.trim().toUpperCase().split(/\s+/, 1)[0] ?? 'UNKNOWN'
+}
+
 export default function Map() {
   const [mode, setMode] = useState<'AUTO' | 'MANUAL'>('AUTO')
   const [teleopMode, setTeleopMode] = useState<TeleopMode>('safe')
   const [emergency, setEmergency] = useState(false)
   const [forceHoldProgress, setForceHoldProgress] = useState(0)
   const [controlMessage, setControlMessage] = useState<string | null>(null)
+  const [dockingInterlock, setDockingInterlock] = useState(false)
+  const [manualStopRequested, setManualStopRequested] = useState(false)
   const { ros, status } = useRos()
   const battery = useBattery(ros, status)
   const driveManager = useDriveManagerStatus(ros, status)
+  const robotMotion = useRobotMotion(ros, status)
   const publishRobotCommand = useRobotCommand(ros, status, driveManager.teleopActive)
-  const teleop = useWebTeleop(ros, status)
+  const currentRobotStatus = robotStatusCode(driveManager.robotStatus)
+  const isDocking = currentRobotStatus === 'DOCKING'
+  const manualInterlockActive = dockingInterlock || manualStopRequested
+  const manualControlAllowed = status === 'connected'
+    && !emergency
+    && !manualInterlockActive
+  const teleop = useWebTeleop(ros, status, manualControlAllowed)
   const [pose, setPose] = useState<RobotPose | null>(null)
   const [visitedRoute, setVisitedRoute] = useState<string[]>(() => getCurrentSessionRoute())
   const sessionStartedRef = useRef(false)
@@ -111,8 +125,41 @@ export default function Map() {
     forceProgressRef.current = null
   }, [])
 
+  const resetManualUi = useCallback(() => {
+    clearForceHoldTimers()
+    forceTriggeredRef.current = false
+    setForceHoldProgress(0)
+    teleop.stop()
+    setMode('AUTO')
+    setTeleopMode('safe')
+  }, [clearForceHoldTimers, teleop.stop])
+
+  useEffect(() => {
+    if (!isDocking) return
+    setDockingInterlock(true)
+    resetManualUi()
+    setControlMessage('DOCKING 중에는 SAFE/FORCE 수동 조종이 잠깁니다.')
+  }, [isDocking, resetManualUi])
+
+  useEffect(() => {
+    if (!dockingInterlock || manualStopRequested) return
+    if (currentRobotStatus !== 'SUCCEEDED') return
+    setDockingInterlock(false)
+    setControlMessage('도킹이 정상 완료되어 수동 조종 잠금이 해제되었습니다.')
+  }, [currentRobotStatus, dockingInterlock, manualStopRequested])
+
+  useEffect(() => {
+    if (!manualStopRequested) return
+    if (currentRobotStatus !== 'STOPPED') return
+    if (!robotMotion.fresh || !robotMotion.stationary) return
+
+    setManualStopRequested(false)
+    setDockingInterlock(false)
+    setControlMessage('STOPPED와 실제 정지를 확인했습니다. 수동 조종을 사용할 수 있습니다.')
+  }, [currentRobotStatus, manualStopRequested, robotMotion.fresh, robotMotion.stationary])
+
   const handleManualPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (status !== 'connected' || emergency) return
+    if (!manualControlAllowed) return
     event.currentTarget.setPointerCapture(event.pointerId)
     clearForceHoldTimers()
     forceTriggeredRef.current = false
@@ -175,9 +222,9 @@ export default function Map() {
   }
 
   const handleJoystickMove = useCallback((linear: number, angular: number) => {
-    if (mode !== 'MANUAL' || emergency) return
+    if (mode !== 'MANUAL' || !manualControlAllowed) return
     teleop.move(teleopMode, linear, angular)
-  }, [emergency, mode, teleop.move, teleopMode])
+  }, [manualControlAllowed, mode, teleop.move, teleopMode])
 
   const handleJoystickStop = useCallback(() => {
     teleop.stop()
@@ -209,9 +256,21 @@ export default function Map() {
     }
   }
 
+  const requestManualIntervention = () => {
+    resetManualUi()
+    setDockingInterlock(true)
+    if (!publishRobotCommand('STOP')) {
+      setControlMessage('STOP 명령을 전송하지 못했습니다. ROS 연결을 확인하세요.')
+      return
+    }
+    setManualStopRequested(true)
+    setControlMessage('STOP 전송됨: STOPPED 상태와 /odom 정지를 확인하고 있습니다.')
+  }
+
   const missionCommandEnabled = status === 'connected'
     && driveManager.teleopActive === false
     && !emergency
+    && !manualInterlockActive
 
   const statusIcon = {
     connecting: <Loader size={14} className="spin" />,
@@ -295,7 +354,7 @@ export default function Map() {
                 onPointerDown={handleManualPointerDown}
                 onPointerUp={handleManualPointerUp}
                 onPointerCancel={handleManualPointerCancel}
-                disabled={status !== 'connected' || emergency}
+                disabled={!manualControlAllowed}
                 title="짧게 누르면 SAFE, 3초간 길게 누르면 FORCE 1회 조작"
               >
                 {teleopMode === 'force' ? '⚠ FORCE ARMED' : 'Manual Ctrl'}
@@ -317,7 +376,34 @@ export default function Map() {
         {controlMessage && <div className={`control-message ${teleopMode === 'force' ? 'danger' : ''}`}>{controlMessage}</div>}
         {driveManager.routeError && <div className="control-message danger">{driveManager.routeError}</div>}
 
-        {mode === 'MANUAL' && !emergency && (
+        {manualInterlockActive && (
+          <div className="card docking-interlock-card">
+            <div className="docking-interlock-title"><ShieldAlert size={16} /> DOCKING MANUAL INTERLOCK</div>
+            <p>
+              {isDocking
+                ? '도킹 프로세스가 /cmd_vel을 사용할 수 있어 SAFE/FORCE를 차단했습니다.'
+                : 'STOPPED와 실제 로봇 정지를 확인할 때까지 수동 조종을 차단합니다.'}
+            </p>
+            <div className="docking-interlock-state">
+              <span>ROBOT: {driveManager.robotStatus}</span>
+              <span>
+                ODOM: {robotMotion.fresh
+                  ? `${robotMotion.stationary ? 'STOPPED' : 'MOVING'} · ${robotMotion.linearSpeed.toFixed(3)} m/s · ${robotMotion.angularSpeed.toFixed(3)} rad/s`
+                  : 'WAITING / STALE'}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="docking-stop-button"
+              onClick={requestManualIntervention}
+              disabled={status !== 'connected'}
+            >
+              {manualStopRequested ? 'STOP 재전송' : 'STOP 후 수동 개입'}
+            </button>
+          </div>
+        )}
+
+        {mode === 'MANUAL' && manualControlAllowed && (
           <div className={`card dpad-card ${teleopMode === 'force' ? 'force-card' : ''}`}>
             <p className="card-label teleop-card-label">
               {teleopMode === 'force' ? <><ShieldAlert size={14} /> FORCE — CAMERA 확인 필수</> : 'SAFE MANUAL CONTROL'}
@@ -325,7 +411,7 @@ export default function Map() {
             <Joystick
               onMove={handleJoystickMove}
               onStop={handleJoystickStop}
-              disabled={status !== 'connected' || driveManager.teleopStatus.startsWith('ERROR')}
+              disabled={!manualControlAllowed || driveManager.teleopStatus.startsWith('ERROR')}
             />
             <p className="teleop-help">
               {teleopMode === 'force'

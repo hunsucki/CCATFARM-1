@@ -20,6 +20,7 @@ const zeroTwist = () => ({
 export function useWebTeleop(
   ros: UseRosReturn['ros'],
   status: UseRosReturn['status'],
+  enabled = true,
 ) {
   const safeTopicRef = useRef<InstanceType<typeof ROSLIB.Topic> | null>(null)
   const forceTopicRef = useRef<InstanceType<typeof ROSLIB.Topic> | null>(null)
@@ -44,7 +45,7 @@ export function useWebTeleop(
   }, [topicForMode])
 
   const move = useCallback((mode: TeleopMode, linearInput: number, angularInput: number) => {
-    if (!ros || status !== 'connected') return false
+    if (!ros || status !== 'connected' || !enabled) return false
 
     if (requestedModeRef.current && requestedModeRef.current !== mode) stop()
 
@@ -63,7 +64,11 @@ export function useWebTeleop(
       }, TELEOP_PERIOD_MS)
     }
     return true
-  }, [ros, status, stop, topicForMode])
+  }, [enabled, ros, status, stop, topicForMode])
+
+  useEffect(() => {
+    if (!enabled) stop()
+  }, [enabled, stop])
 
   useEffect(() => {
     if (!ros || status !== 'connected') {
