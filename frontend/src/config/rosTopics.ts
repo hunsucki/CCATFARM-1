@@ -25,6 +25,14 @@ export const TOPICS = {
     description: 'Nav2 PAUSE 확인 후 사용하는 저속 force 명령',
   },
 
+  // 웹에서 drive_manager에 지속형 SAFE/FORCE 모드 전환을 명시적으로 요청
+  WEB_TELEOP_MODE_REQUEST: {
+    name: '/web_teleop/mode_request',
+    messageType: 'std_msgs/msg/String',
+    direction: 'publish' as const,
+    description: '웹 수동 조종 모드 요청 (SAFE, FORCE)',
+  },
+
   // 로봇 상위 명령 (퍼블리시) — START/HOME/ESTOP
   ROBOT_COMMAND: {
     name: '/robot_command',

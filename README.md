@@ -205,6 +205,7 @@ ros2 node info /rosbridge_websocket
 | Web → ROS | `/robot_command` | `std_msgs/msg/String` | `START`, `HOME`, `STOP`, `ESTOP`, `RESET` 지원 |
 | Web → ROS | `/cmd_vel_web_safe` | `geometry_msgs/msg/Twist` | 일반 수동 조종, 웹 제한 0.15 m/s·0.40 rad/s |
 | Web → ROS | `/cmd_vel_web_force` | `geometry_msgs/msg/Twist` | 탈출용 저속 조종, 웹 제한 0.08 m/s·0.25 rad/s |
+| Web → ROS | `/web_teleop/mode_request` | `std_msgs/msg/String` | 지속형 수동 조종 모드 요청 (`SAFE`, `FORCE`) |
 | Web → ROS | `/initialpose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | 정지 확인 후 지도 위치와 yaw 재설정 |
 | ROS → Web | `/web_teleop/status` | `std_msgs/msg/String` | `DISABLED`, `TRANSITIONING_*`, `SAFE`, `FORCE`, `ERROR ...` 표시 |
 | ROS → Web | `/web_teleop/active` | `std_msgs/msg/Bool` | START/HOME 및 2D Pose 상호잠금 |
@@ -218,10 +219,15 @@ ros2 node info /rosbridge_websocket
 - 기존 `EMERGENCY → /cmd_vel` 수동 조종 구조를 제거하고, 비상 정지와 수동 조종을 별도 기능으로 분리했습니다.
 - `Manual Ctrl` 버튼을 짧게 누르면 SAFE 수동 조종 화면이 열립니다.
 - `Manual Ctrl` 버튼을 약 3초 동안 길게 누르면 진행 표시줄과 함께 FORCE가 준비됩니다.
-- FORCE는 상시 모드로 남지 않습니다. 준비 후 **다음 한 번의 조이스틱 조작만** `/cmd_vel_web_force`로 보내며, 손을 떼는 즉시 0 속도를 발행하고 SAFE로 자동 복귀합니다.
+- 웹은 `FORCE`를 한 번 요청한 뒤 `/web_teleop/status=FORCE`와 `/web_teleop/active=true`가 모두 확인된 경우에만 `FORCE ARMED`를 표시하고 FORCE Twist를 허용합니다.
+- FORCE는 조이스틱을 놓아도 ARMED 상태를 유지합니다. 손을 떼면 `/cmd_vel_web_force`에 0 속도를 발행해 로봇은 정지하지만, 다음 조이스틱 입력도 FORCE로 보냅니다.
+- `FORCE ARMED` 버튼을 다시 누르면 FORCE 타이머를 중단하고 `/cmd_vel_web_force`에 0 Twist를 발행한 다음 `/web_teleop/mode_request`에 `SAFE`를 한 번 발행합니다.
+- `TRANSITIONING_FORCE`에서는 FORCE Twist를 차단하며, `TRANSITIONING_SAFE`에서는 조이스틱과 START/HOME을 차단합니다.
+- 서버가 `SAFE` 또는 `DISABLED`와 `active=false`를 함께 발행한 뒤에만 START/HOME을 다시 활성화합니다.
 - 조이스틱을 누르는 동안 최신 Twist를 15 Hz로 반복 발행합니다. `pointerup`, `pointercancel`, `pointerleave`, 브라우저 blur, 탭 숨김, 연결 종료 시 송신을 중단하고 가능한 경우 0 속도를 한 번 발행합니다.
+- 조이스틱 해제, 브라우저 blur, 웹 연결 종료 및 command watchdog은 속도만 0으로 만들며 FORCE latch 해제 조건으로 사용하지 않습니다.
 - 서버 상태가 `ERROR ...`이면 로컬 송신 루프를 즉시 중단하고 FORCE를 자동 재시도하지 않습니다.
-- FORCE 화면은 붉은 경고 상태로 표시하며 카메라 확인과 저속 1회 조작을 안내합니다. 사람, 계단, 낙하 위험이 있는 곳에서는 사용하지 마십시오.
+- FORCE 화면은 붉은 경고 상태로 표시하며 매 조작 전 카메라 확인을 안내합니다. 사람, 계단, 낙하 위험이 있는 곳에서는 사용하지 마십시오.
 
 ### 명령 상호잠금과 비상 정지
 
@@ -232,11 +238,14 @@ ros2 node info /rosbridge_websocket
 
 ### 2D Pose Estimate 변경
 
-- `/web_teleop/active=false`인 경우에만 2D Pose 버튼과 `/initialpose` 발행을 허용합니다.
-- 위치 출처가 `DOCKED` 또는 `DOCKED_ASSUMED`이면 2D Pose를 차단하고 다음 START의 자동 초기화를 사용하도록 안내합니다.
+- ROS 연결 직후 `/map`을 구독하며, 한 번 받은 지도는 ROS 재연결이나 로봇 상태 변경 중에도 유지합니다.
+- 2D Pose는 ROS가 연결되어 있고 `/web_teleop/active`가 `true`가 아닐 때 사용할 수 있습니다. 위치 출처가 `DOCKED` 또는 `DOCKED_ASSUMED`여도 차단하지 않습니다.
+- 지도 클릭은 yaw 0을, 드래그는 드래그 방향의 yaw를 사용합니다.
 - 공분산은 x/y 표준편차 0.25 m, yaw 표준편차 15도 기준으로 설정했습니다.
-- `/initialpose` 발행 이후에 실제로 새로 수신한 `/robot_pose`만 확인에 사용합니다. 기존 캐시 위치는 성공으로 처리하지 않습니다.
-- 지도 마커에 `/robot_pose` quaternion으로 계산한 yaw 방향 화살표를 추가했습니다. Pose 전송 직후 HOME을 자동 실행하지 않으므로 운영자가 새 위치와 방향을 확인한 뒤 HOME을 눌러야 합니다.
+- `/initialpose`를 한 번 발행한 뒤에는 중복 2D Pose 입력과 START를 잠그고, 새 `MANUAL_NAV2_READY` 상태를 받으면 다시 활성화합니다.
+- 수동 초기화에서는 NavigateToPose goal, START, `/cmd_vel`을 자동 발행하지 않습니다.
+- 안내 문구: `수동 2D Pose는 테스트/복구용입니다. START를 누르면 도크 출발 위치로 다시 자동 초기화됩니다.`
+- 지도 마커에는 `/robot_pose` quaternion으로 계산한 yaw 방향 화살표를 표시합니다.
 
 ### 주요 변경 파일
 
@@ -244,7 +253,7 @@ ros2 node info /rosbridge_websocket
 - `frontend/src/hooks/useDriveManagerStatus.ts`: drive_manager 상태·위치 출처·경로 subscriber
 - `frontend/src/hooks/useRos.ts`: rosbridge 2초 자동 재연결
 - `frontend/src/hooks/useRobotCommand.ts`: 명령 타입 확장과 START/HOME 상호잠금
-- `frontend/src/pages/Map.tsx`: 3초 FORCE 준비, 1회 조작, 상태 UI, ESTOP/RESET, `/robot_pose` 적용
+- `frontend/src/pages/Map.tsx`: 3초 FORCE 준비, 지속형 FORCE 토글, 상태 UI, ESTOP/RESET, `/robot_pose` 적용
 - `frontend/src/pages/Home.tsx`: `/robot_pose` 및 drive_manager 상태 적용, START/HOME 상호잠금
 - `frontend/src/components/RosMap.tsx`: 2D Pose 제약, 새 위치 확인, 위치 출처 처리와 방향 표시
 - `frontend/src/components/Joystick.tsx`: 누름 시작·해제·취소·이탈 이벤트 처리
@@ -259,6 +268,7 @@ npm run build
 # 서버 상태와 웹 송신 확인
 ros2 topic echo /web_teleop/status
 ros2 topic echo /web_teleop/active
+ros2 topic echo /web_teleop/mode_request
 ros2 topic hz /cmd_vel_web_safe
 ros2 topic hz /cmd_vel_web_force
 ros2 topic echo /robot_pose

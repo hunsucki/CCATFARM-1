@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { UseRosReturn } from './useRos'
 import { TOPICS } from '../config/rosTopics'
+import { modeRequestData } from '../utils/forceMode'
 
 declare const ROSLIB: typeof import('roslib')
 
@@ -24,6 +25,7 @@ export function useWebTeleop(
 ) {
   const safeTopicRef = useRef<InstanceType<typeof ROSLIB.Topic> | null>(null)
   const forceTopicRef = useRef<InstanceType<typeof ROSLIB.Topic> | null>(null)
+  const modeRequestTopicRef = useRef<InstanceType<typeof ROSLIB.Topic> | null>(null)
   const timerRef = useRef<number | null>(null)
   const requestedModeRef = useRef<TeleopMode | null>(null)
   const latestTwistRef = useRef(zeroTwist())
@@ -43,6 +45,23 @@ export function useWebTeleop(
     requestedModeRef.current = null
     latestTwistRef.current = zeroTwist()
   }, [topicForMode])
+
+  const stopForce = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+
+    forceTopicRef.current?.publish(zeroTwist() as any)
+    requestedModeRef.current = null
+    latestTwistRef.current = zeroTwist()
+  }, [])
+
+  const requestMode = useCallback((mode: TeleopMode) => {
+    if (!ros || status !== 'connected' || !modeRequestTopicRef.current) return false
+    modeRequestTopicRef.current.publish({ data: modeRequestData(mode) } as any)
+    return true
+  }, [ros, status])
 
   const move = useCallback((mode: TeleopMode, linearInput: number, angularInput: number) => {
     if (!ros || status !== 'connected' || !enabled) return false
@@ -67,7 +86,9 @@ export function useWebTeleop(
   }, [enabled, ros, status, stop, topicForMode])
 
   useEffect(() => {
-    if (!enabled) stop()
+    if (!enabled) {
+      stop()
+    }
   }, [enabled, stop])
 
   useEffect(() => {
@@ -75,6 +96,7 @@ export function useWebTeleop(
       stop()
       safeTopicRef.current = null
       forceTopicRef.current = null
+      modeRequestTopicRef.current = null
       return
     }
 
@@ -88,13 +110,20 @@ export function useWebTeleop(
       name: TOPICS.CMD_VEL_WEB_FORCE.name,
       messageType: TOPICS.CMD_VEL_WEB_FORCE.messageType,
     })
+    modeRequestTopicRef.current = new ROSLIB.Topic({
+      ros,
+      name: TOPICS.WEB_TELEOP_MODE_REQUEST.name,
+      messageType: TOPICS.WEB_TELEOP_MODE_REQUEST.messageType,
+    })
 
     return () => {
       stop()
       safeTopicRef.current?.unadvertise()
       forceTopicRef.current?.unadvertise()
+      modeRequestTopicRef.current?.unadvertise()
       safeTopicRef.current = null
       forceTopicRef.current = null
+      modeRequestTopicRef.current = null
     }
   }, [ros, status, stop])
 
@@ -110,5 +139,5 @@ export function useWebTeleop(
     }
   }, [stop])
 
-  return { move, stop }
+  return { move, stop, stopForce, requestMode }
 }

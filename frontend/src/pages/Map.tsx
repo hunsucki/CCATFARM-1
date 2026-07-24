@@ -4,13 +4,14 @@ import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
 import { useRobotCommand, type RobotCommand } from '../hooks/useRobotCommand'
 import { useDriveManagerStatus } from '../hooks/useDriveManagerStatus'
-import { useWebTeleop, type TeleopMode } from '../hooks/useWebTeleop'
+import { useWebTeleop } from '../hooks/useWebTeleop'
 import { useRobotMotion } from '../hooks/useRobotMotion'
 import { TOPICS } from '../config/rosTopics'
 import { recordZoneEntry, startNewSession, getCurrentSessionRoute } from '../utils/patrolStorage'
 import CameraStream from '../components/CameraStream'
 import Joystick from '../components/Joystick'
 import RosMap from '../components/RosMap'
+import { deriveServerTeleopState } from '../utils/forceMode'
 
 declare const ROSLIB: typeof import('roslib')
 
@@ -38,24 +39,32 @@ function robotStatusCode(status: string) {
 
 export default function Map() {
   const [mode, setMode] = useState<'AUTO' | 'MANUAL'>('AUTO')
-  const [teleopMode, setTeleopMode] = useState<TeleopMode>('safe')
   const [emergency, setEmergency] = useState(false)
   const [forceHoldProgress, setForceHoldProgress] = useState(0)
   const [controlMessage, setControlMessage] = useState<string | null>(null)
   const [dockingInterlock, setDockingInterlock] = useState(false)
   const [manualStopRequested, setManualStopRequested] = useState(false)
+  const [manualPosePending, setManualPosePending] = useState(false)
   const { ros, status } = useRos()
   const battery = useBattery(ros, status)
   const driveManager = useDriveManagerStatus(ros, status)
   const robotMotion = useRobotMotion(ros, status)
   const publishRobotCommand = useRobotCommand(ros, status, driveManager.teleopActive)
+  const serverTeleop = deriveServerTeleopState(
+    driveManager.teleopStatus,
+    driveManager.teleopActive,
+  )
   const currentRobotStatus = robotStatusCode(driveManager.robotStatus)
   const isDocking = currentRobotStatus === 'DOCKING'
   const manualInterlockActive = dockingInterlock || manualStopRequested
   const manualControlAllowed = status === 'connected'
     && !emergency
     && !manualInterlockActive
-  const teleop = useWebTeleop(ros, status, manualControlAllowed)
+  const teleopCommandAllowed = manualControlAllowed
+    && !serverTeleop.transitioningForce
+    && !serverTeleop.transitioningSafe
+    && !serverTeleop.error
+  const teleop = useWebTeleop(ros, status, teleopCommandAllowed)
   const [pose, setPose] = useState<RobotPose | null>(null)
   const [visitedRoute, setVisitedRoute] = useState<string[]>(() => getCurrentSessionRoute())
   const sessionStartedRef = useRef(false)
@@ -107,11 +116,17 @@ export default function Map() {
   }, [ros, status])
 
   useEffect(() => {
-    if (!driveManager.teleopStatus.startsWith('ERROR')) return
+    if (!serverTeleop.error) return
     teleop.stop()
-    setTeleopMode('safe')
     setControlMessage(driveManager.teleopStatus)
-  }, [driveManager.teleopStatus, teleop.stop])
+  }, [driveManager.teleopStatus, serverTeleop.error, teleop.stop])
+
+  useEffect(() => {
+    if (serverTeleop.forceArmed) {
+      setMode('MANUAL')
+      setControlMessage('서버가 FORCE ARMED 상태를 확인했습니다.')
+    }
+  }, [serverTeleop.forceArmed])
 
   useEffect(() => () => {
     if (forceTimeoutRef.current !== null) window.clearTimeout(forceTimeoutRef.current)
@@ -130,9 +145,9 @@ export default function Map() {
     forceTriggeredRef.current = false
     setForceHoldProgress(0)
     teleop.stop()
+    teleop.requestMode('safe')
     setMode('AUTO')
-    setTeleopMode('safe')
-  }, [clearForceHoldTimers, teleop.stop])
+  }, [clearForceHoldTimers, teleop.requestMode, teleop.stop])
 
   useEffect(() => {
     if (!isDocking) return
@@ -164,6 +179,15 @@ export default function Map() {
     clearForceHoldTimers()
     forceTriggeredRef.current = false
     setForceHoldProgress(0)
+
+    if (serverTeleop.forceArmed || serverTeleop.transitioningForce) {
+      forceTriggeredRef.current = true
+      teleop.stopForce()
+      teleop.requestMode('safe')
+      setControlMessage('SAFE 전환을 요청했습니다. 서버 확인을 기다립니다.')
+      return
+    }
+
     const startedAt = Date.now()
 
     forceProgressRef.current = window.setInterval(() => {
@@ -172,10 +196,14 @@ export default function Map() {
     forceTimeoutRef.current = window.setTimeout(() => {
       forceTriggeredRef.current = true
       teleop.stop()
+      if (!teleop.requestMode('force')) {
+        setControlMessage('FORCE 요청을 전송하지 못했습니다. ROS 연결을 확인하세요.')
+        clearForceHoldTimers()
+        return
+      }
       setMode('MANUAL')
-      setTeleopMode('force')
       setForceHoldProgress(100)
-      setControlMessage('FORCE 준비됨: 카메라를 확인하고 한 번만 저속 조작하세요.')
+      setControlMessage('FORCE 전환을 요청했습니다. 서버 확인 전에는 조작할 수 없습니다.')
       clearForceHoldTimers()
     }, FORCE_HOLD_MS)
   }
@@ -183,12 +211,15 @@ export default function Map() {
   const handleManualPointerUp = () => {
     clearForceHoldTimers()
     setForceHoldProgress(0)
-    if (!forceTriggeredRef.current) {
-      teleop.stop()
-      setMode('MANUAL')
-      setTeleopMode('safe')
-      setControlMessage('SAFE 수동 조종이 준비되었습니다.')
+    if (forceTriggeredRef.current) {
+      forceTriggeredRef.current = false
+      return
     }
+
+    teleop.stop()
+    teleop.requestMode('safe')
+    setMode('MANUAL')
+    setControlMessage('SAFE 수동 조종이 준비되었습니다.')
   }
 
   const handleManualPointerCancel = useCallback(() => {
@@ -196,11 +227,11 @@ export default function Map() {
     setForceHoldProgress(0)
     if (forceTriggeredRef.current) {
       teleop.stop()
-      setTeleopMode('safe')
+      teleop.requestMode('safe')
       setControlMessage('FORCE 준비가 취소되어 SAFE로 복귀했습니다.')
     }
     forceTriggeredRef.current = false
-  }, [clearForceHoldTimers, teleop.stop])
+  }, [clearForceHoldTimers, teleop.requestMode, teleop.stop])
 
   useEffect(() => {
     const cancelForceHold = () => {
@@ -216,23 +247,22 @@ export default function Map() {
 
   const selectAutoMode = () => {
     teleop.stop()
+    teleop.requestMode('safe')
     setMode('AUTO')
-    setTeleopMode('safe')
     setControlMessage('수동 입력을 해제했습니다. 서버의 active=false를 기다리세요.')
   }
 
   const handleJoystickMove = useCallback((linear: number, angular: number) => {
-    if (mode !== 'MANUAL' || !manualControlAllowed) return
-    teleop.move(teleopMode, linear, angular)
-  }, [manualControlAllowed, mode, teleop.move, teleopMode])
+    if (mode !== 'MANUAL' || !teleopCommandAllowed) return
+    teleop.move(serverTeleop.forceArmed ? 'force' : 'safe', linear, angular)
+  }, [mode, serverTeleop.forceArmed, teleop.move, teleopCommandAllowed])
 
   const handleJoystickStop = useCallback(() => {
     teleop.stop()
-    if (teleopMode === 'force') {
-      setTeleopMode('safe')
-      setControlMessage('FORCE 1회 조작이 종료되어 SAFE로 자동 복귀했습니다.')
+    if (serverTeleop.forceArmed) {
+      setControlMessage('로봇 정지. FORCE ARMED는 유지되며 버튼을 다시 누르면 해제됩니다.')
     }
-  }, [teleop.stop, teleopMode])
+  }, [serverTeleop.forceArmed, teleop.stop])
 
   const sendMissionCommand = (command: RobotCommand) => {
     setControlMessage(null)
@@ -243,8 +273,8 @@ export default function Map() {
 
   const handleEmergency = () => {
     teleop.stop()
+    teleop.requestMode('safe')
     setMode('AUTO')
-    setTeleopMode('safe')
     if (emergency) {
       publishRobotCommand('RESET')
       setEmergency(false)
@@ -269,8 +299,11 @@ export default function Map() {
 
   const missionCommandEnabled = status === 'connected'
     && driveManager.teleopActive === false
+    && serverTeleop.released
+    && !serverTeleop.transitioningSafe
     && !emergency
     && !manualInterlockActive
+  const startCommandEnabled = missionCommandEnabled && !manualPosePending
 
   const statusIcon = {
     connecting: <Loader size={14} className="spin" />,
@@ -314,8 +347,10 @@ export default function Map() {
           ros={ros}
           status={status}
           robotPose={pose}
-          robotPoseSource={driveManager.robotPoseSource}
           teleopActive={driveManager.teleopActive}
+          robotStatus={driveManager.robotStatus}
+          robotStatusSequence={driveManager.robotStatusSequence}
+          onManualPosePendingChange={setManualPosePending}
           patrolRoute={visitedRoute}
           onZoneChange={handleZoneChange}
         />
@@ -350,14 +385,20 @@ export default function Map() {
             <div className="mode-toggle">
               <button className={mode === 'AUTO' ? 'active' : ''} onClick={selectAutoMode}>AUTO Patrol</button>
               <button
-                className={`${mode === 'MANUAL' ? 'active' : ''} ${teleopMode === 'force' ? 'force' : ''}`}
+                className={`${mode === 'MANUAL' ? 'active' : ''} ${serverTeleop.forceArmed ? 'force' : ''}`}
                 onPointerDown={handleManualPointerDown}
                 onPointerUp={handleManualPointerUp}
                 onPointerCancel={handleManualPointerCancel}
-                disabled={!manualControlAllowed}
-                title="짧게 누르면 SAFE, 3초간 길게 누르면 FORCE 1회 조작"
+                disabled={!manualControlAllowed || serverTeleop.transitioningSafe}
+                title="짧게 누르면 SAFE, 3초간 길게 누르면 지속형 FORCE, FORCE ARMED를 다시 누르면 해제"
               >
-                {teleopMode === 'force' ? '⚠ FORCE ARMED' : 'Manual Ctrl'}
+                {serverTeleop.forceArmed
+                  ? '⚠ FORCE ARMED'
+                  : serverTeleop.transitioningForce
+                    ? 'FORCE 전환 중'
+                    : serverTeleop.transitioningSafe
+                      ? 'SAFE 전환 중'
+                      : 'Manual Ctrl'}
                 {forceHoldProgress > 0 && (
                   <span className="force-hold-progress" style={{ width: `${forceHoldProgress}%` }} />
                 )}
@@ -366,14 +407,14 @@ export default function Map() {
           </div>
           <div className="progress-info">
             <span className="mode-label">TELEOP SERVER</span>
-            <span className={`teleop-state ${driveManager.teleopStatus === 'FORCE' ? 'force' : ''}`}>
+            <span className={`teleop-state ${serverTeleop.forceArmed ? 'force' : ''}`}>
               {driveManager.teleopStatus}
             </span>
             <span className="teleop-active">active: {String(driveManager.teleopActive ?? 'unknown')}</span>
           </div>
         </div>
 
-        {controlMessage && <div className={`control-message ${teleopMode === 'force' ? 'danger' : ''}`}>{controlMessage}</div>}
+        {controlMessage && <div className={`control-message ${serverTeleop.forceArmed || serverTeleop.transitioningForce ? 'danger' : ''}`}>{controlMessage}</div>}
         {driveManager.routeError && <div className="control-message danger">{driveManager.routeError}</div>}
 
         {manualInterlockActive && (
@@ -404,19 +445,29 @@ export default function Map() {
         )}
 
         {mode === 'MANUAL' && manualControlAllowed && (
-          <div className={`card dpad-card ${teleopMode === 'force' ? 'force-card' : ''}`}>
+          <div className={`card dpad-card ${serverTeleop.forceArmed ? 'force-card' : ''}`}>
             <p className="card-label teleop-card-label">
-              {teleopMode === 'force' ? <><ShieldAlert size={14} /> FORCE — CAMERA 확인 필수</> : 'SAFE MANUAL CONTROL'}
+              {serverTeleop.forceArmed
+                ? <><ShieldAlert size={14} /> FORCE — CAMERA 확인 필수</>
+                : serverTeleop.transitioningForce
+                  ? 'FORCE 전환 확인 대기'
+                  : serverTeleop.transitioningSafe
+                    ? 'SAFE 전환 확인 대기'
+                    : 'SAFE MANUAL CONTROL'}
             </p>
             <Joystick
               onMove={handleJoystickMove}
               onStop={handleJoystickStop}
-              disabled={!manualControlAllowed || driveManager.teleopStatus.startsWith('ERROR')}
+              disabled={!teleopCommandAllowed}
             />
             <p className="teleop-help">
-              {teleopMode === 'force'
-                ? '저속 1회 조작 후 SAFE로 자동 복귀합니다.'
-                : 'FORCE가 필요하면 Manual Ctrl을 3초간 길게 누르세요.'}
+              {serverTeleop.forceArmed
+                ? '조이스틱을 놓으면 정지하지만 FORCE ARMED는 유지됩니다. 버튼을 다시 눌러 해제하세요.'
+                : serverTeleop.transitioningForce
+                  ? '서버가 FORCE 상태를 발행할 때까지 조이스틱 입력이 차단됩니다.'
+                  : serverTeleop.transitioningSafe
+                    ? 'SAFE와 active=false 확인 전까지 조작과 START/HOME이 차단됩니다.'
+                    : 'FORCE가 필요하면 Manual Ctrl을 3초간 길게 누르세요.'}
             </p>
           </div>
         )}
@@ -426,7 +477,7 @@ export default function Map() {
         </div>
 
         <div className="robot-actions">
-          <button className="action-btn start" onClick={() => sendMissionCommand('START')} disabled={!missionCommandEnabled}>START</button>
+          <button className="action-btn start" onClick={() => sendMissionCommand('START')} disabled={!startCommandEnabled}>START</button>
           <button className="action-btn home" onClick={() => sendMissionCommand('HOME')} disabled={!missionCommandEnabled}>HOME</button>
           <button
             className={`action-btn emergency ${emergency ? 'emergency-active' : ''}`}

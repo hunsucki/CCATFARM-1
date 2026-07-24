@@ -478,8 +478,7 @@ body {
   font-size: 10px; font-weight: 600; text-align: center;
 }
 .ros-map-pose-status.pending { background: rgba(0,102,255,0.9); color: #fff; }
-.ros-map-pose-status.confirmed { background: rgba(0,230,118,0.9); color: #000; }
-.ros-map-pose-status.timeout { background: rgba(255,59,48,0.9); color: #fff; }
+.ros-map-pose-status.ready { background: rgba(0,230,118,0.9); color: #000; }
 .ros-map-pose-guard {
   position: absolute; left: 8px; right: 8px; top: 42px; z-index: 3;
   border: 1px solid rgba(255,152,0,0.35); border-radius: 6px;

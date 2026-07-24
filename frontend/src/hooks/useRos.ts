@@ -13,7 +13,7 @@ export interface UseRosReturn {
   disconnect: () => void
 }
 
-const ROS_URL = import.meta.env.VITE_ROS_URL ?? 'ws://192.168.0.141:9090'
+const ROS_URL = import.meta.env.VITE_ROS_URL?.trim()
 
 export function useRos(): UseRosReturn {
   const rosRef = useRef<InstanceType<typeof ROSLIB.Ros> | null>(null)
@@ -22,6 +22,12 @@ export function useRos(): UseRosReturn {
   const [status, setStatus] = useState<RosStatus>('disconnected')
 
   const connect = useCallback(() => {
+    if (!ROS_URL) {
+      console.error('[ROS] VITE_ROS_URL is not configured')
+      setStatus('error')
+      return
+    }
+
     shouldReconnectRef.current = true
     if (reconnectTimerRef.current !== null) {
       window.clearTimeout(reconnectTimerRef.current)

@@ -3,6 +3,13 @@ import { Check, Crosshair, X, Grid3X3 } from 'lucide-react'
 import type { UseRosReturn } from '../hooks/useRos'
 import { TOPICS } from '../config/rosTopics'
 import { ZONES, generateZonesFromMap, getZoneFromPose, type ZoneBounds } from '../utils/zoneMap'
+import {
+  buildInitialPoseMessage,
+  canSetManualInitialPose,
+  isNewManualNav2Ready,
+  yawFromDrag,
+  type PoseEstimate,
+} from '../utils/initialPose'
 
 declare const ROSLIB: typeof import('roslib')
 
@@ -17,27 +24,21 @@ interface RosMapProps {
   ros: UseRosReturn['ros']
   status: UseRosReturn['status']
   robotPose?: { x: number; y: number; yaw?: number; receivedAt?: number } | null
-  /** drive_manager 위치 출처 (AMCL, DOCKED, DOCKED_ASSUMED) */
-  robotPoseSource?: string
-  /** true/unknown일 때 2D Pose Estimate를 차단 */
+  /** true일 때만 2D Pose Estimate를 차단 */
   teleopActive?: boolean | null
+  robotStatus?: string
+  robotStatusSequence?: number
+  onManualPosePendingChange?: (pending: boolean) => void
   /** 순회 경로 (Zone name 배열, 예: ['Zone A', 'Zone B']) */
   patrolRoute?: string[]
   /** 로봇이 Zone을 변경했을 때 콜백 */
   onZoneChange?: (zoneName: string) => void
 }
 
-interface PoseEstimate {
-  x: number
-  y: number
-  yaw: number
-}
-
 type InitialPoseStatus =
   | { state: 'idle' }
-  | { state: 'pending'; x: number; y: number; sentAt: number }
-  | { state: 'confirmed'; x: number; y: number }
-  | { state: 'timeout'; x: number; y: number }
+  | { state: 'pending'; statusSequenceAtSend: number }
+  | { state: 'ready' }
 
 // 색상 팔레트 — 전술 관제 스타일 (맵은 어둡게)
 const COLOR_FREE = [8, 18, 36]           // 배경 (이동 가능)
@@ -45,21 +46,14 @@ const COLOR_OCCUPIED = [0, 180, 200]     // 시안 계열 (벽/장애물)
 const COLOR_UNKNOWN = [6, 12, 24]        // 더 어두운 (미탐색)
 const MAP_THROTTLE_MS = Number(import.meta.env.VITE_MAP_THROTTLE_MS ?? 1000)
 
-const INITIAL_POSE_COVARIANCE = [
-  0.0625, 0, 0, 0, 0, 0,
-  0, 0.0625, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0.06853892326654787,
-]
-
 export default function RosMap({
   ros,
   status,
   robotPose,
-  robotPoseSource = 'UNKNOWN',
   teleopActive = null,
+  robotStatus = 'UNKNOWN',
+  robotStatusSequence = 0,
+  onManualPosePendingChange,
   patrolRoute,
   onZoneChange,
 }: RosMapProps) {
@@ -69,7 +63,7 @@ export default function RosMap({
   const [activeZones, setActiveZones] = useState<ZoneBounds[]>(ZONES)
   const [stationPos, setStationPos] = useState<{ x: number; y: number } | null>(null)
   const stationCaptured = useRef(false)
-  const [connected, setConnected] = useState(false)
+  const [hasMap, setHasMap] = useState(false)
   const [poseMode, setPoseMode] = useState(false)
   const [zoneEditMode, setZoneEditMode] = useState(false)
   const [zoneDraft, setZoneDraft] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null)
@@ -439,13 +433,11 @@ export default function RosMap({
 
   useEffect(() => {
     if (!ros || status !== 'connected') {
-      setConnected(false)
       // 연결 끊기면 Home Zone 초기화 (재연결 시 새로 캡처)
       stationCaptured.current = false
       setStationPos(null)
       return
     }
-    setConnected(true)
 
     const mapTopic = new ROSLIB.Topic({
       ros,
@@ -500,6 +492,7 @@ export default function RosMap({
 
       ctx.putImageData(imgData, 0, 0)
       mapDataRef.current = imgData
+      setHasMap(true)
     })
 
     return () => mapTopic.unsubscribe()
@@ -548,30 +541,34 @@ export default function RosMap({
     }
   }, [robotPose, activeZones, onZoneChange])
 
+  const manualPosePending = initialPoseStatus.state === 'pending'
+  const canSetInitialPose = canSetManualInitialPose(
+    status === 'connected',
+    teleopActive,
+    manualPosePending,
+  )
+  const poseGuardMessage = manualPosePending
+    ? '수동 초기화 준비 중입니다. MANUAL_NAV2_READY를 기다리세요.'
+    : status !== 'connected'
+      ? 'ROS 연결 후 2D Pose를 사용할 수 있습니다.'
+      : teleopActive === true
+        ? '수동 조종 해제(active=false)를 확인한 뒤 위치를 설정하세요.'
+        : '수동 2D Pose는 테스트/복구용입니다. START를 누르면 도크 출발 위치로 다시 자동 초기화됩니다.'
+
   useEffect(() => {
-    if (initialPoseStatus.state !== 'pending' || !robotPose) return
-    if (!robotPose.receivedAt || robotPose.receivedAt <= initialPoseStatus.sentAt) return
+    onManualPosePendingChange?.(manualPosePending)
+  }, [manualPosePending, onManualPosePendingChange])
 
-    const dx = robotPose.x - initialPoseStatus.x
-    const dy = robotPose.y - initialPoseStatus.y
-    const distance = Math.hypot(dx, dy)
-
-    if (distance <= 0.5) {
-      setInitialPoseStatus({
-        state: 'confirmed',
-        x: initialPoseStatus.x,
-        y: initialPoseStatus.y,
-      })
-    }
-  }, [initialPoseStatus, robotPose])
-
-  const dockedPose = robotPoseSource === 'DOCKED' || robotPoseSource === 'DOCKED_ASSUMED'
-  const canSetInitialPose = teleopActive === false && !dockedPose
-  const poseGuardMessage = dockedPose
-    ? '도킹 상태에서는 다음 START의 자동 초기화를 사용하세요.'
-    : teleopActive !== false
-      ? '수동 조종 해제(active=false)를 확인한 뒤 위치를 설정하세요.'
-      : null
+  useEffect(() => {
+    setInitialPoseStatus((current) => {
+      if (current.state !== 'pending') return current
+      return isNewManualNav2Ready(
+        robotStatus,
+        robotStatusSequence,
+        current.statusSequenceAtSend,
+      ) ? { state: 'ready' } : current
+    })
+  }, [robotStatus, robotStatusSequence])
 
   useEffect(() => {
     if (canSetInitialPose) return
@@ -581,21 +578,7 @@ export default function RosMap({
   }, [canSetInitialPose])
 
   useEffect(() => {
-    if (initialPoseStatus.state !== 'pending') return
-
-    const timeout = window.setTimeout(() => {
-      setInitialPoseStatus((current) => (
-        current.state === 'pending'
-          ? { state: 'timeout', x: current.x, y: current.y }
-          : current
-      ))
-    }, 8000)
-
-    return () => window.clearTimeout(timeout)
-  }, [initialPoseStatus])
-
-  useEffect(() => {
-    if (initialPoseStatus.state !== 'confirmed' && initialPoseStatus.state !== 'timeout') return
+    if (initialPoseStatus.state !== 'ready') return
 
     const timeout = window.setTimeout(() => {
       setInitialPoseStatus({ state: 'idle' })
@@ -638,10 +621,7 @@ export default function RosMap({
     const current = canvasToWorld(event.clientX, event.clientY)
     if (!current) return
 
-    const dx = current.x - dragStart.x
-    const dy = current.y - dragStart.y
-    const yaw = Math.hypot(dx, dy) > 0.02 ? Math.atan2(dy, dx) : 0
-    setPoseDraft({ ...dragStart, yaw })
+    setPoseDraft({ ...dragStart, yaw: yawFromDrag(dragStart, current) })
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -664,16 +644,13 @@ export default function RosMap({
 
     if (!poseMode || !dragStart) return
     event.currentTarget.releasePointerCapture(event.pointerId)
+    const end = canvasToWorld(event.clientX, event.clientY)
+    if (end) setPoseDraft({ ...dragStart, yaw: yawFromDrag(dragStart, end) })
     setDragStart(null)
   }
 
   const publishInitialPose = () => {
     if (!ros || status !== 'connected' || !poseDraft || !canSetInitialPose) return
-
-    const now = Date.now()
-    const secs = Math.floor(now / 1000)
-    const nsecs = (now % 1000) * 1_000_000
-    const halfYaw = poseDraft.yaw / 2
 
     const initialPoseTopic = new ROSLIB.Topic({
       ros,
@@ -681,32 +658,13 @@ export default function RosMap({
       messageType: TOPICS.INITIAL_POSE.messageType,
     })
 
-    initialPoseTopic.publish({
-      header: {
-        stamp: { sec: secs, nanosec: nsecs },
-        frame_id: 'map',
-      },
-      pose: {
-        pose: {
-          position: { x: poseDraft.x, y: poseDraft.y, z: 0 },
-          orientation: {
-            x: 0,
-            y: 0,
-            z: Math.sin(halfYaw),
-            w: Math.cos(halfYaw),
-          },
-        },
-        covariance: INITIAL_POSE_COVARIANCE,
-      },
-    } as any)
+    initialPoseTopic.publish(buildInitialPoseMessage(poseDraft) as any)
 
     setPoseMode(false)
     setPoseDraft(null)
     setInitialPoseStatus({
       state: 'pending',
-      x: poseDraft.x,
-      y: poseDraft.y,
-      sentAt: now,
+      statusSequenceAtSend: robotStatusSequence,
     })
   }
 
@@ -718,14 +676,18 @@ export default function RosMap({
 
   return (
     <div className="ros-map-container">
-      {!connected && (
+      {!hasMap && (
         <div className="ros-map-placeholder">
           <div className="ros-map-icon">MAP</div>
           <p>ROS 맵 대기 중</p>
-          <p className="ros-map-hint">rosbridge 연결 후 /map 토픽 수신 시 표시됩니다</p>
+          <p className="ros-map-hint">
+            {status === 'connected'
+              ? '/map 토픽을 구독하고 있습니다'
+              : 'rosbridge 연결 후 /map 토픽을 자동 구독합니다'}
+          </p>
         </div>
       )}
-      {connected && (
+      {hasMap && (
         <div className="ros-map-toolbar">
           <button
             type="button"
@@ -782,21 +744,21 @@ export default function RosMap({
       <canvas
         ref={canvasRef}
         className={`ros-map-canvas ${poseMode ? 'pose-mode' : ''} ${zoneEditMode ? 'zone-edit-mode' : ''}`}
-        style={{ display: connected ? 'block' : 'none' }}
+        style={{ display: hasMap ? 'block' : 'none' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       />
-      {connected && poseMode && (
+      {hasMap && poseMode && (
         <div className="ros-map-pose-hint">
-          지도를 누른 뒤 진행 방향으로 드래그하세요
+          클릭은 기본 방향(yaw 0), 드래그는 드래그 방향으로 설정합니다
         </div>
       )}
-      {connected && poseGuardMessage && !poseMode && (
+      {hasMap && poseGuardMessage && !poseMode && (
         <div className="ros-map-pose-guard">{poseGuardMessage}</div>
       )}
-      {connected && zoneEditMode && (
+      {hasMap && zoneEditMode && (
         <div className="ros-map-pose-hint zone-edit-hint">
           드래그로 Zone 영역을 지정하세요 (좌표는 콘솔에 출력됩니다)
           {cursorCoord && (
@@ -806,24 +768,23 @@ export default function RosMap({
           )}
         </div>
       )}
-      {connected && initialPoseStatus.state !== 'idle' && !poseMode && (
+      {hasMap && initialPoseStatus.state !== 'idle' && !poseMode && (
         <div className={`ros-map-pose-status ${initialPoseStatus.state}`}>
-          {initialPoseStatus.state === 'pending' && '2D Pose 전송됨. 새 /robot_pose 확인 중...'}
-          {initialPoseStatus.state === 'confirmed' && '새 /robot_pose가 지정한 좌표 근처로 갱신됨'}
-          {initialPoseStatus.state === 'timeout' && '위치 갱신 확인 실패. /robot_pose를 확인하세요'}
+          {initialPoseStatus.state === 'pending' && '2D Pose 전송됨. MANUAL_NAV2_READY 대기 중...'}
+          {initialPoseStatus.state === 'ready' && 'MANUAL_NAV2_READY 확인됨. START와 2D Pose를 사용할 수 있습니다.'}
         </div>
       )}
-      {connected && robotPose && (
+      {hasMap && robotPose && (
         <div className="ros-map-coords">
           X: {robotPose.x.toFixed(2)} | Y: {robotPose.y.toFixed(2)}
         </div>
       )}
-      {connected && stationPos && !zoneEditMode && (
+      {hasMap && stationPos && !zoneEditMode && (
         <div className="home-zone-badge">
           HOME: ({stationPos.x.toFixed(1)}, {stationPos.y.toFixed(1)})
         </div>
       )}
-      {connected && mapMeta && zoneEditMode && (
+      {hasMap && mapMeta && zoneEditMode && (
         <div className="ros-map-meta">
           맵 범위: X[{mapMeta.origin.x.toFixed(1)} ~ {(mapMeta.origin.x + mapMeta.width * mapMeta.resolution).toFixed(1)}]
           Y[{mapMeta.origin.y.toFixed(1)} ~ {(mapMeta.origin.y + mapMeta.height * mapMeta.resolution).toFixed(1)}]

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { UseRosReturn } from './useRos'
 import { TOPICS } from '../config/rosTopics'
 
@@ -8,6 +8,7 @@ export interface DriveManagerStatus {
   teleopActive: boolean | null
   teleopStatus: string
   robotStatus: string
+  robotStatusSequence: number
   robotPoseSource: string
   missionRoute: Record<string, unknown> | null
   routeError: string | null
@@ -17,6 +18,7 @@ const INITIAL_STATUS: DriveManagerStatus = {
   teleopActive: null,
   teleopStatus: 'UNKNOWN',
   robotStatus: 'UNKNOWN',
+  robotStatusSequence: 0,
   robotPoseSource: 'UNKNOWN',
   missionRoute: null,
   routeError: null,
@@ -27,10 +29,14 @@ export function useDriveManagerStatus(
   status: UseRosReturn['status'],
 ): DriveManagerStatus {
   const [driveStatus, setDriveStatus] = useState<DriveManagerStatus>(INITIAL_STATUS)
+  const robotStatusSequenceRef = useRef(0)
 
   useEffect(() => {
     if (!ros || status !== 'connected') {
-      setDriveStatus(INITIAL_STATUS)
+      setDriveStatus({
+        ...INITIAL_STATUS,
+        robotStatusSequence: robotStatusSequenceRef.current,
+      })
       return
     }
 
@@ -51,10 +57,14 @@ export function useDriveManagerStatus(
       },
       {
         topic: TOPICS.ROBOT_STATUS,
-        onMessage: (message: any) => setDriveStatus((current) => ({
-          ...current,
-          robotStatus: String(message.data ?? 'UNKNOWN'),
-        })),
+        onMessage: (message: any) => {
+          robotStatusSequenceRef.current += 1
+          setDriveStatus((current) => ({
+            ...current,
+            robotStatus: String(message.data ?? 'UNKNOWN'),
+            robotStatusSequence: robotStatusSequenceRef.current,
+          }))
+        },
       },
       {
         topic: TOPICS.ROBOT_POSE_STATUS,
