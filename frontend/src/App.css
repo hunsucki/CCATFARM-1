@@ -626,3 +626,254 @@ body {
   color: var(--text-secondary); font-size: 11px; cursor: pointer;
 }
 .logout-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ══════════════════════════════════════════════
+   Crops & CropDetail — SF HUD Style
+   ══════════════════════════════════════════════ */
+
+/* ── 헤더 아이콘 버튼 ── */
+.crops-icon-btn {
+  width: 32px; height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.crops-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── 빈 상태 ── */
+.crops-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 60px 20px; gap: 8px;
+}
+.crops-empty-title {
+  font-size: 16px; font-weight: 700; color: var(--text-primary); margin-top: 8px;
+}
+.crops-empty-sub { font-size: 13px; color: var(--text-muted); }
+
+/* ── 작물 카드 (Crops 목록) ── */
+.crop-card-new {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.crop-card-new:active { transform: scale(0.99); }
+.crop-card-new.abnormal { border-color: rgba(255, 59, 48, 0.5); }
+.crop-card-new.normal { border-color: rgba(0, 230, 118, 0.3); }
+
+.crop-thumb {
+  width: 64px; height: 64px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.crop-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.crop-thumb-fallback {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--danger-dim);
+}
+.crop-thumb-fallback.hidden { display: none; }
+
+.crop-info-new { flex: 1; min-width: 0; }
+.crop-zone-row {
+  display: flex; align-items: center; gap: 5px; margin-bottom: 2px;
+}
+.crop-zone-name { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.crop-status-label {
+  font-size: 11px; font-weight: 600; margin-bottom: 3px;
+}
+.crop-status-label.abnormal { color: var(--danger); }
+.crop-status-label.normal { color: var(--success); }
+.crop-desc {
+  font-size: 11px; color: var(--text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.crop-time { font-size: 10px; color: var(--text-muted); }
+
+/* ── 상세 페이지 헤더 ── */
+.detail-back-btn {
+  width: 32px; height: 32px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-elevated); color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.detail-header-title {
+  font-size: 13px; font-weight: 700; color: var(--accent);
+  letter-spacing: 1px;
+}
+
+/* ── 섹션 레이블 ── */
+.detail-section { display: flex; flex-direction: column; gap: 8px; }
+.detail-section-label {
+  font-size: 10px; font-weight: 600; color: var(--accent);
+  letter-spacing: 1.5px; text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+
+/* ── 상단 요약 카드 ── */
+.detail-summary-card {
+  background: rgba(255, 59, 48, 0.15);
+  border: 1px solid rgba(255, 59, 48, 0.4);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+.detail-summary-top {
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.detail-summary-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: rgba(255, 59, 48, 0.25);
+  border: 1px solid rgba(255, 59, 48, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--danger); flex-shrink: 0;
+}
+.detail-summary-info { flex: 1; min-width: 0; }
+.detail-summary-title { font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.detail-summary-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.detail-summary-time {
+  font-size: 9px; color: var(--text-muted);
+  display: flex; align-items: center; white-space: nowrap;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+/* ── 이미지 섹션 ── */
+.detail-img-wrap {
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--border);
+}
+.detail-img { width: 100%; display: block; object-fit: cover; }
+.detail-img-zoom-btn {
+  position: absolute; bottom: 32px; right: 8px;
+  display: flex; align-items: center;
+  background: rgba(8,18,36,0.85); backdrop-filter: blur(4px);
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-secondary); font-size: 11px;
+  padding: 4px 8px; cursor: pointer;
+}
+.detail-img-meta {
+  display: flex; justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(8,18,36,0.9);
+  font-size: 10px; color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ── 감지 항목 카드 ── */
+.detail-finding-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.detail-finding-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 700; color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.detail-finding-confidence {
+  font-size: 11px; color: var(--text-muted); margin-bottom: 8px;
+}
+.detail-risk-badge {
+  display: inline-block;
+  padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; color: #fff;
+}
+
+/* ── 상세 정보 행 ── */
+.detail-info-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 12px;
+}
+.detail-info-row:last-child { border-bottom: none; }
+.detail-info-key { color: var(--text-muted); }
+.detail-info-val {
+  color: var(--text-primary); font-weight: 500;
+  display: flex; align-items: center; gap: 2px;
+}
+
+/* ── 권장 조치 ── */
+.detail-rec-block {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.detail-rec-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 700; color: var(--text-primary);
+  margin-bottom: 8px;
+}
+.detail-rec-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.detail-rec-list li {
+  font-size: 12px; color: var(--text-secondary);
+  padding-left: 12px; position: relative;
+}
+.detail-rec-list li::before {
+  content: '•'; position: absolute; left: 0;
+  color: var(--accent);
+}
+
+/* ── 이상 이력 ── */
+.detail-history-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px; border-radius: var(--radius);
+  cursor: pointer; transition: background 0.15s;
+}
+.detail-history-item:hover { background: var(--bg-elevated); }
+.detail-history-thumb {
+  width: 44px; height: 44px; border-radius: var(--radius);
+  background: var(--bg-elevated); overflow: hidden; flex-shrink: 0;
+}
+.detail-history-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.detail-history-info { flex: 1; }
+.detail-history-type { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.detail-history-time { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.detail-history-zone {
+  display: inline-block; margin-top: 3px;
+  font-size: 10px; color: var(--accent);
+  background: var(--accent-dim); border-radius: 3px;
+  padding: 1px 6px;
+}
+
+/* ── 확대 모달 ── */
+.detail-zoom-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,0.92);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.detail-zoom-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  color: var(--text-secondary); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 201;
+}
+.detail-zoom-img {
+  max-width: 100%; max-height: 80svh;
+  border-radius: var(--radius-lg);
+  object-fit: contain;
+}

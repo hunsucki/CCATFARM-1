@@ -1,11 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import cv2
 import os
+import json
 import threading
 import time
+from pathlib import Path
 
 from database import create_user, verify_user, init_db
 from auth import create_token, verify_token
@@ -140,6 +142,45 @@ def generate_mjpeg(cam_id: str):
                 b'\r\n'
             )
         time.sleep(0.033)  # ~30fps
+
+
+# ── Alerts (사이드카 JSON 방식) ──
+ALERTS_DIR = Path(__file__).parent / "alerts"
+ALERTS_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/api/alerts")
+def get_alerts():
+    """alerts/ 폴더의 JSON 파일을 스캔하여 목록 반환 (최신순)"""
+    items = []
+    for json_file in sorted(ALERTS_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+        try:
+            with open(json_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            items.append(data)
+        except Exception:
+            continue
+    return items
+
+
+@app.get("/api/alerts/{alert_id}")
+def get_alert(alert_id: str):
+    """단일 알림 상세 조회"""
+    json_file = ALERTS_DIR / f"{alert_id}.json"
+    if not json_file.exists():
+        raise HTTPException(status_code=404, detail="Alert not found")
+    with open(json_file, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.get("/api/alert/image/{alert_id}")
+def get_alert_image(alert_id: str):
+    """알림 이미지 서빙"""
+    for ext in ["jpg", "jpeg", "png"]:
+        img_file = ALERTS_DIR / f"{alert_id}.{ext}"
+        if img_file.exists():
+            return FileResponse(str(img_file), media_type=f"image/{ext}")
+    raise HTTPException(status_code=404, detail="Image not found")
 
 
 @app.get("/")
