@@ -4,14 +4,16 @@ import { TOPICS } from '../config/rosTopics'
 
 declare const ROSLIB: typeof import('roslib')
 
-export type RobotCommand = 'START' | 'HOME' | 'ESTOP'
+export type RobotCommand = 'START' | 'HOME' | 'STOP' | 'ESTOP' | 'RESET'
 
 export function useRobotCommand(
   ros: UseRosReturn['ros'],
   status: UseRosReturn['status'],
+  teleopActive: boolean | null = null,
 ) {
   return useCallback((command: RobotCommand) => {
     if (!ros || status !== 'connected') return false
+    if ((command === 'START' || command === 'HOME') && teleopActive !== false) return false
 
     const topic = new ROSLIB.Topic({
       ros,
@@ -21,5 +23,5 @@ export function useRobotCommand(
 
     topic.publish({ data: command } as any)
     return true
-  }, [ros, status])
+  }, [ros, status, teleopActive])
 }

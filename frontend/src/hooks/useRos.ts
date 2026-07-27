@@ -13,13 +13,26 @@ export interface UseRosReturn {
   disconnect: () => void
 }
 
-const ROS_URL = import.meta.env.VITE_ROS_URL ?? 'ws://192.168.0.141:9090'
+const ROS_URL = import.meta.env.VITE_ROS_URL?.trim()
 
 export function useRos(): UseRosReturn {
   const rosRef = useRef<InstanceType<typeof ROSLIB.Ros> | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const shouldReconnectRef = useRef(true)
   const [status, setStatus] = useState<RosStatus>('disconnected')
 
   const connect = useCallback(() => {
+    if (!ROS_URL) {
+      console.error('[ROS] VITE_ROS_URL is not configured')
+      setStatus('error')
+      return
+    }
+
+    shouldReconnectRef.current = true
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     if (rosRef.current) {
       rosRef.current.close()
     }
@@ -31,6 +44,10 @@ export function useRos(): UseRosReturn {
 
     ros.on('connection', () => {
       console.log('[ROS] Connected to', ROS_URL)
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       setStatus('connected')
     })
 
@@ -42,10 +59,22 @@ export function useRos(): UseRosReturn {
     ros.on('close', () => {
       console.log('[ROS] Connection closed')
       setStatus('disconnected')
+      if (!shouldReconnectRef.current || rosRef.current !== ros) return
+      reconnectTimerRef.current = window.setTimeout(() => {
+        if (!shouldReconnectRef.current || rosRef.current !== ros) return
+        console.log('[ROS] Reconnecting to', ROS_URL)
+        setStatus('connecting')
+        ros.connect(ROS_URL)
+      }, 2000)
     })
   }, [])
 
   const disconnect = useCallback(() => {
+    shouldReconnectRef.current = false
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     rosRef.current?.close()
     rosRef.current = null
     setStatus('disconnected')
@@ -54,6 +83,11 @@ export function useRos(): UseRosReturn {
   useEffect(() => {
     connect()
     return () => {
+      shouldReconnectRef.current = false
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       rosRef.current?.close()
       rosRef.current = null
     }

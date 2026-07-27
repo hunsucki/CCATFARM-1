@@ -114,6 +114,15 @@ export default function Joystick({ onMove, onStop, disabled = false }: JoystickP
   // 초기 렌더
   useEffect(() => { draw(0, 0) }, [draw])
 
+  // 제어 도중 상호잠금이 걸리면 포인터 이벤트를 기다리지 않고 즉시 정지합니다.
+  useEffect(() => {
+    if (!disabled || !dragging.current) return
+    dragging.current = false
+    stickPos.current = { x: 0, y: 0 }
+    draw(0, 0)
+    onStop()
+  }, [disabled, draw, onStop])
+
   const getPos = (e: React.PointerEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect()
     const x = e.clientX - rect.left - SIZE / 2
@@ -133,6 +142,8 @@ export default function Joystick({ onMove, onStop, disabled = false }: JoystickP
     const pos = getPos(e)
     stickPos.current = pos
     draw(pos.x, pos.y)
+    const norm = Math.sqrt(pos.x * pos.x + pos.y * pos.y) / MAX_DIST
+    onMove(-(pos.y / MAX_DIST) * norm, -(pos.x / MAX_DIST) * norm)
   }
 
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -172,6 +183,7 @@ export default function Joystick({ onMove, onStop, disabled = false }: JoystickP
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onPointerLeave={handlePointerUp}
     />
   )
 }
