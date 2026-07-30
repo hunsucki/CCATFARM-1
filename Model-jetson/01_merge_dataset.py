@@ -108,9 +108,33 @@ def main():
     # 1. CVAT XML → YOLO seg 변환
     print("=" * 50)
     print("[1/3] CVAT XML → YOLO Segmentation 변환 중...")
+
+    # annotations.xml 위치 자동 탐색
+    xml_path = None
+    images_dir = None
+    for candidate in [
+        (ccat_dir / "annotations.xml", ccat_dir / "images"),
+        (ccat_dir / "annotations.xml", ccat_dir / "image"),
+        (ccat_dir / "image" / "annotations.xml", ccat_dir / "image"),
+        (ccat_dir / "images" / "annotations.xml", ccat_dir / "images"),
+    ]:
+        if candidate[0].exists():
+            xml_path = candidate[0]
+            images_dir = candidate[1]
+            break
+
+    if xml_path is None:
+        print("[ERROR] annotations.xml을 찾을 수 없습니다!")
+        print(f"  탐색 경로: {ccat_dir}")
+        print("  ccat 폴더 안에 annotations.xml이 있는지 확인하세요.")
+        return
+
+    print(f"  XML 경로: {xml_path}")
+    print(f"  이미지 경로: {images_dir}")
+
     cvat_xml_to_yolo_seg(
-        xml_path=ccat_dir / "annotations.xml",
-        images_dir=ccat_dir / "images",
+        xml_path=xml_path,
+        images_dir=images_dir,
         output_images=output_images,
         output_labels=output_labels,
     )
@@ -128,7 +152,8 @@ def main():
 
     # 4. ccat에서 변환된 이미지만 따로 목록 저장 (1차 학습용)
     ccat_images_list = output_dir.parent / "ccat_images_list.txt"
-    ccat_imgs = list((ccat_dir / "images").glob("*.*"))
+    ccat_imgs = [f for f in images_dir.glob("*.*")
+                 if f.suffix.lower() in [".jpg", ".jpeg", ".png"]]
     with open(ccat_images_list, "w") as f:
         for img in ccat_imgs:
             f.write(img.name + "\n")
