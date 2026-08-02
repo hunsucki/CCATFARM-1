@@ -22,10 +22,8 @@ transform = A.Compose([
     A.VerticalFlip(p=0.2),
     A.RandomRotate90(p=0.3),
     A.Rotate(limit=15, p=0.4, border_mode=cv2.BORDER_REFLECT),
-    A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.5),
-    A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=30, val_shift_limit=20, p=0.4),
-    A.GaussNoise(var_limit=(10, 50), p=0.3),
-    A.GaussianBlur(blur_limit=(3, 5), p=0.2),
+    A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.3),
+    A.HueSaturationValue(hue_shift_limit=5, sat_shift_limit=10, val_shift_limit=10, p=0.3),
     A.RandomScale(scale_limit=0.2, p=0.3),
 ])
 
