@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Home from './pages/Home'
 import Map from './pages/Map'
 import Crops from './pages/Crops'
+import CropDetail from './pages/CropDetail'
 import Settings from './pages/Settings'
 import './App.css'
 
@@ -31,6 +32,7 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/map" element={<Map />} />
             <Route path="/crops" element={<Crops />} />
+            <Route path="/crops/:id" element={<CropDetail />} />
             <Route path="/settings" element={<Settings onLogout={() => { clearAuth(); setLoggedIn(false) }} />} />
           </Routes>
         </main>

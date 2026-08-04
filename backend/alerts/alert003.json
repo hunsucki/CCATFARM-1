@@ -1,0 +1,16 @@
+{
+  "id": "alert003",
+  "zone": "Zone B",
+  "status": "Abnormal",
+  "type": "해충피해",
+  "confidence": 0.95,
+  "severity": 4,
+  "area_ratio": 22,
+  "location": "잎 전체",
+  "description": "Zone B — 해충 피해(구멍) 감지 (깻잎)",
+  "timestamp": "2026-07-26T10:00:00",
+  "recommendations": {
+    "treatment": ["해충 방제약 살포 검토", "인근 구역 집중 모니터링", "피해 잎 제거 및 격리"],
+    "monitoring": ["1일 후 재확인 필요", "해충 종류 식별 후 맞춤 대응", "정기 순찰 강화"]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "alert001",
+  "zone": "Zone C",
+  "status": "Abnormal",
+  "type": "황화현상",
+  "confidence": 0.91,
+  "severity": 3,
+  "area_ratio": 18,
+  "location": "잎 중앙-상단 영역",
+  "description": "Zone C — 황화 현상 감지 (깻잎)",
+  "timestamp": "2026-07-19T11:26:38",
+  "recommendations": {
+    "treatment": ["질소 비료 부족 가능성 확인", "토양 pH 및 EC 점검", "엽면시비 권장 (질소/마그네슘)"],
+    "monitoring": ["2~3일 후 재확인 필요", "유사 증상 확산 여부 관찰", "정기 순찰 및 데이터 축적"]
+  }
+}
