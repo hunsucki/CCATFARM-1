@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Bell, ChevronRight, Upload, Camera } from 'lucide-react'
+import { Bell, Upload, Camera, X } from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -19,6 +19,13 @@ interface CropResult {
   overall: string
   filename?: string
   analyzed_at?: string
+  imageUrl?: string
+}
+
+const CONDITION_LABELS: Record<string, string> = {
+  chlorosis: '황화',
+  insect_hole: '충공',
+  normal: '정상',
 }
 
 export default function Crops() {
@@ -28,9 +35,9 @@ export default function Crops() {
   const [loading, setLoading] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [selectedZone, setSelectedZone] = useState('Zone A')
+  const [selectedCrop, setSelectedCrop] = useState<CropResult | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // 분석 결과 조회
   const fetchCrops = async () => {
     try {
       setLoading(true)
@@ -44,11 +51,8 @@ export default function Crops() {
     }
   }
 
-  useEffect(() => {
-    fetchCrops()
-  }, [])
+  useEffect(() => { fetchCrops() }, [])
 
-  // 이미지 업로드 → 분석
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -56,7 +60,9 @@ export default function Crops() {
     setAnalyzing(true)
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('zone', selectedZone)
+
+    // 이미지 미리보기 URL 생성
+    const imageUrl = URL.createObjectURL(file)
 
     try {
       const res = await fetch(`${API_BASE}/api/crops/analyze?zone=${selectedZone}`, {
@@ -64,7 +70,9 @@ export default function Crops() {
         body: formData,
       })
       const result = await res.json()
+      result.imageUrl = imageUrl
       setCrops((prev) => [result, ...prev])
+      setSelectedCrop(result)
     } catch (e) {
       console.error('분석 실패:', e)
     } finally {
@@ -73,7 +81,6 @@ export default function Crops() {
     }
   }
 
-  // 카메라 프레임 분석
   const handleCameraAnalyze = async (camId: string) => {
     setAnalyzing(true)
     try {
@@ -82,6 +89,7 @@ export default function Crops() {
       })
       const result = await res.json()
       setCrops((prev) => [result, ...prev])
+      setSelectedCrop(result)
     } catch (e) {
       console.error('카메라 분석 실패:', e)
     } finally {
@@ -104,15 +112,6 @@ export default function Crops() {
     return '#9ca3af'
   }
 
-  const getConditionLabel = (type: string) => {
-    switch (type) {
-      case 'chlorosis': return '🟡 황화'
-      case 'insect_hole': return '🟤 충공'
-      case 'normal': return '🟢 정상'
-      default: return type
-    }
-  }
-
   return (
     <div className="page">
       <header className="page-header">
@@ -121,7 +120,7 @@ export default function Crops() {
       </header>
 
       {/* 분석 버튼 영역 */}
-      <div className="crops-action-bar" style={{ padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <select
           value={selectedZone}
           onChange={(e) => setSelectedZone(e.target.value)}
@@ -148,16 +147,15 @@ export default function Crops() {
           카메라 분석
         </button>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileUpload}
-          style={{ display: 'none' }}
-        />
+        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} style={{ display: 'none' }} />
       </div>
 
-      {/* Filter Bar */}
+      {/* 시각화 모달 */}
+      {selectedCrop && selectedCrop.imageUrl && (
+        <ImageOverlay crop={selectedCrop} onClose={() => setSelectedCrop(null)} />
+      )}
+
+      {/* Filter */}
       <div className="crops-filter-bar">
         <div className="status-tabs">
           {(['All', 'Normal', 'Abnormal'] as Filter[]).map((f) => (
@@ -176,14 +174,15 @@ export default function Crops() {
         </div>
       </div>
 
+      {/* 결과 목록 */}
       <div className="page-content">
         {loading && <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>로딩 중...</div>}
 
         {filtered.map((crop, i) => (
-          <div key={i} className="crop-card">
-            <div className="crop-info" style={{ flex: 1 }}>
+          <div key={i} className="crop-card" onClick={() => setSelectedCrop(crop)} style={{ cursor: 'pointer' }}>
+            <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <span className="crop-zone" style={{ fontWeight: 600, fontSize: 14 }}>{crop.zone}</span>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{crop.zone}</span>
                 <span style={{ fontSize: 12, color: getStatusColor(crop.status), fontWeight: 600 }}>
                   {crop.status}
                 </span>
@@ -191,24 +190,67 @@ export default function Crops() {
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
                 {crop.conditions?.map((cond, j) => (
                   <span key={j} style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: '#f3f4f6' }}>
-                    {getConditionLabel(cond.type)} ({cond.confidence})
+                    {CONDITION_LABELS[cond.type] || cond.type} ({cond.confidence})
                   </span>
                 ))}
               </div>
               <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>{crop.overall}</p>
-              {crop.analyzed_at && (
-                <p style={{ fontSize: 11, color: '#9ca3af', margin: '4px 0 0' }}>{crop.analyzed_at}</p>
-              )}
+              {crop.analyzed_at && <p style={{ fontSize: 11, color: '#9ca3af', margin: '4px 0 0' }}>{crop.analyzed_at}</p>}
             </div>
-            <ChevronRight size={16} className="crop-arrow" />
           </div>
         ))}
 
         {!loading && filtered.length === 0 && (
           <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
-            분석된 데이터가 없습니다. 이미지를 업로드하거나 카메라 분석을 실행하세요.
+            분석된 데이터가 없습니다. 이미지를 업로드해서 분석해보세요.
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+/* 이미지 + 텍스트 결과 모달 */
+function ImageOverlay({ crop, onClose }: { crop: CropResult; onClose: () => void }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16
+    }}>
+      <div style={{ position: 'relative', maxWidth: '90vw', maxHeight: '60vh' }}>
+        <button onClick={onClose} style={{
+          position: 'absolute', top: -36, right: 0, background: 'none', border: 'none', color: '#fff', cursor: 'pointer'
+        }}>
+          <X size={24} />
+        </button>
+
+        <img
+          src={crop.imageUrl}
+          alt="분석 이미지"
+          style={{ maxWidth: '90vw', maxHeight: '60vh', borderRadius: 8 }}
+        />
+      </div>
+
+      {/* 분석 결과 텍스트 */}
+      <div style={{ marginTop: 16, color: '#fff', textAlign: 'center', maxWidth: 500 }}>
+        <p style={{ fontSize: 16, fontWeight: 600, margin: '0 0 8px' }}>
+          {crop.zone} — <span style={{ color: crop.status === 'Normal' ? '#22c55e' : '#ef4444' }}>{crop.status}</span>
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
+          {crop.conditions?.map((cond, j) => (
+            <span key={j} style={{
+              fontSize: 13, padding: '4px 10px', borderRadius: 6,
+              background: cond.type === 'chlorosis' ? '#facc15' : cond.type === 'insect_hole' ? '#92400e' : '#22c55e',
+              color: cond.type === 'chlorosis' ? '#000' : '#fff'
+            }}>
+              {CONDITION_LABELS[cond.type] || cond.type} ({cond.confidence})
+            </span>
+          ))}
+        </div>
+        <p style={{ fontSize: 14, color: '#d1d5db', margin: 0 }}>{crop.overall}</p>
+        {crop.conditions?.map((cond, j) => (
+          <p key={j} style={{ fontSize: 12, color: '#9ca3af', margin: '4px 0 0' }}>• {cond.description}</p>
+        ))}
       </div>
     </div>
   )
