@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -6,9 +6,13 @@ import cv2
 import os
 import threading
 import time
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from database import create_user, verify_user, init_db
 from auth import create_token, verify_token
+from gemini_analyzer import analyze_image_bytes
 
 app = FastAPI()
 
@@ -145,6 +149,70 @@ def generate_mjpeg(cam_id: str):
 @app.get("/")
 def root():
     return {"message": "CCATFARM API가 정상 작동 중입니다!"}
+
+
+# ── 작물 분석 (Gemini Vision) ──
+crop_results: list[dict] = []  # 메모리 저장 (나중에 DB로 전환 가능)
+
+
+@app.post("/api/crops/analyze")
+async def analyze_crop(file: UploadFile = File(...), zone: str = "Unknown"):
+    """이미지 업로드 → Gemini로 분석 → 결과 반환"""
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="이미지 파일만 업로드 가능합니다.")
+
+    image_bytes = await file.read()
+    mime_type = file.content_type or "image/jpeg"
+
+    result = analyze_image_bytes(image_bytes, mime_type)
+    result["zone"] = zone
+    result["filename"] = file.filename
+    result["analyzed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    # 결과 저장
+    crop_results.insert(0, result)
+    # 최대 100개만 유지
+    if len(crop_results) > 100:
+        crop_results.pop()
+
+    return result
+
+
+@app.get("/api/crops")
+def get_crops(status: str = "All", zone: str = ""):
+    """저장된 분석 결과 목록 조회"""
+    filtered = crop_results
+    if status != "All":
+        filtered = [c for c in filtered if c.get("status") == status]
+    if zone:
+        filtered = [c for c in filtered if c.get("zone") == zone]
+    return {"crops": filtered, "total": len(filtered)}
+
+
+@app.post("/api/crops/analyze-camera")
+async def analyze_camera_frame(cam_id: str = "1", zone: str = "Unknown"):
+    """카메라 현재 프레임을 캡처해서 분석"""
+    stream = streams.get(cam_id)
+    if not stream:
+        raise HTTPException(status_code=404, detail=f"Camera {cam_id} not found")
+
+    frame = stream.get_frame()
+    if frame is None:
+        raise HTTPException(status_code=503, detail="카메라 프레임 없음")
+
+    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    image_bytes = buffer.tobytes()
+
+    result = analyze_image_bytes(image_bytes, "image/jpeg")
+    result["zone"] = zone
+    result["filename"] = f"camera_{cam_id}_capture"
+    result["analyzed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    crop_results.insert(0, result)
+    if len(crop_results) > 100:
+        crop_results.pop()
+
+    return result
 
 
 @app.get("/api/data")
