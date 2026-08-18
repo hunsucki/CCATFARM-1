@@ -169,6 +169,10 @@ async def analyze_crop(file: UploadFile = File(...), zone: str = "Unknown"):
     result["filename"] = file.filename
     result["analyzed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
 
+    # 이미지를 base64로 포함
+    import base64
+    result["imageData"] = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
+
     # 결과 저장
     crop_results.insert(0, result)
     # 최대 100개만 유지
