@@ -1,0 +1,22 @@
+{
+  "name": "CCATFARM - 작물 모니터링",
+  "short_name": "CCATFARM",
+  "description": "실내 자율주행 로봇 기반 작물 생장 모니터링 시스템",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1724",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
