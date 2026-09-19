@@ -10,7 +10,6 @@ BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
 BACKEND_PORT="${BACKEND_PORT:-8001}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-RPI_IP="${RPI_IP:-192.168.0.4}"
 
 BACKEND_PID=""
 FRONTEND_PID=""
@@ -76,7 +75,7 @@ log "최신 프런트엔드 프로덕션 빌드를 생성합니다."
 log "백엔드 시작: http://$BACKEND_HOST:$BACKEND_PORT"
 (
   cd "$BACKEND_DIR"
-  export PYTHONUNBUFFERED=1 RPI_IP
+  export PYTHONUNBUFFERED=1
   exec .venv/bin/python -m uvicorn main:app \
     --host "$BACKEND_HOST" \
     --port "$BACKEND_PORT"

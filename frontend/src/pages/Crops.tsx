@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Bell, Upload, Camera, AlertTriangle, ChevronRight } from 'lucide-react'
+import { Bell, Upload, AlertTriangle, ChevronRight } from 'lucide-react'
 import CropDetail from './CropDetail'
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -26,12 +26,6 @@ interface CropResult {
   imageData?: string
 }
 
-const CONDITION_LABELS: Record<string, string> = {
-  chlorosis: '황화',
-  insect_hole: '충공',
-  normal: '정상',
-}
-
 export default function Crops() {
   const [filter, setFilter] = useState<Filter>('All')
   const [selectedZones, setSelectedZones] = useState<string[]>([])
@@ -40,7 +34,6 @@ export default function Crops() {
   const [analyzing, setAnalyzing] = useState(false)
   const [selectedZone, setSelectedZone] = useState('Zone A')
   const [selectedCrop, setSelectedCrop] = useState<CropResult | null>(null)
-  const [selectedIndex, setSelectedIndex] = useState<number>(-1)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const fetchCrops = async () => {
@@ -63,7 +56,7 @@ export default function Crops() {
     return (
       <CropDetail
         crop={selectedCrop}
-        onBack={() => { setSelectedCrop(null); setSelectedIndex(-1) }}
+        onBack={() => setSelectedCrop(null)}
       />
     )
   }
@@ -96,23 +89,7 @@ export default function Crops() {
     }
   }
 
-  const handleCameraAnalyze = async (camId: string) => {
-    setAnalyzing(true)
-    try {
-      const res = await fetch(`${API_BASE}/api/crops/analyze-camera?cam_id=${camId}&zone=${selectedZone}`, {
-        method: 'POST',
-      })
-      const result = await res.json()
-      setCrops((prev) => [result, ...prev])
-      setSelectedCrop(result)
-    } catch (e) {
-      console.error('카메라 분석 실패:', e)
-    } finally {
-      setAnalyzing(false)
-    }
-  }
-
-  const handleRetry = async (crop: CropResult, index: number) => {
+  const handleRetry = async (crop: CropResult) => {
     if (!crop.imageData) return
     setAnalyzing(true)
     try {
@@ -178,15 +155,6 @@ export default function Crops() {
           {analyzing ? '분석 중...' : '이미지 분석'}
         </button>
 
-        <button
-          onClick={() => handleCameraAnalyze('1')}
-          disabled={analyzing}
-          style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', borderRadius: 6, background: '#10b981', color: '#fff', border: 'none', fontSize: 13, cursor: 'pointer' }}
-        >
-          <Camera size={14} />
-          카메라 분석
-        </button>
-
         <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} style={{ display: 'none' }} />
       </div>
 
@@ -238,7 +206,7 @@ export default function Crops() {
             </div>
             {crop.status === 'Error' ? (
               <button
-                onClick={(e) => { e.stopPropagation(); handleRetry(crop, i) }}
+                onClick={(e) => { e.stopPropagation(); handleRetry(crop) }}
                 disabled={analyzing}
                 style={{ padding: '6px 10px', borderRadius: 6, background: '#f59e0b', color: '#000', border: 'none', fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
               >

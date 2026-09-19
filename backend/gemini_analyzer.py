@@ -7,11 +7,6 @@ import os
 import requests
 from pathlib import Path
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY 환경변수를 설정하세요.")
-
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
 
 ANALYSIS_PROMPT = """
@@ -56,6 +51,14 @@ bbox는 해당 이상 영역을 넉넉하게 감싸도록 잡아주세요.
 def analyze_image_bytes(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
     """이미지 바이트를 받아서 Gemini로 분석 (REST API)"""
     try:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            return {
+                "status": "Error",
+                "conditions": [],
+                "overall": "GEMINI_API_KEY 환경변수를 설정하세요."
+            }
+
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
         payload = {
@@ -76,7 +79,7 @@ def analyze_image_bytes(image_bytes: bytes, mime_type: str = "image/jpeg") -> di
 
         headers = {
             "Content-Type": "application/json",
-            "X-goog-api-key": GEMINI_API_KEY,
+            "X-goog-api-key": api_key,
         }
 
         response = requests.post(GEMINI_URL, json=payload, headers=headers, timeout=60)

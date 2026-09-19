@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
-import { Save, Trash2, Plus, X } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { Save, Trash2, X } from 'lucide-react'
 import type { ZoneBounds } from '../utils/zoneMap'
 
 const ZONE_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899', '#14b8a6']
