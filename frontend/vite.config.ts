@@ -3,6 +3,21 @@ import react from '@vitejs/plugin-react-swc' // 이 부분이 swc로 바뀌어�
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  server: {
+    host: true, // 0.0.0.0 바인딩 — 다른 기기에서도 접속 가능
+    proxy: {
+      // /api, /ws 요청을 백엔드(8000)로 프록시 → 브라우저는 항상 dev 서버 호스트로만 요청
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({

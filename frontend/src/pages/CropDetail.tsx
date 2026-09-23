@@ -10,6 +10,7 @@ interface Condition {
 }
 
 interface CropResult {
+  id?: number
   zone: string
   status: string
   conditions: Condition[]
@@ -17,6 +18,12 @@ interface CropResult {
   recommendation?: string
   filename?: string
   analyzed_at?: string
+  annotationUrl?: string
+  camera?: string
+  runId?: string
+  captureId?: string
+  capturedAt?: string
+  pose?: { x: number; y: number; yaw: number; source?: string } | null
   imageUrl?: string
   imageData?: string
 }
@@ -25,6 +32,8 @@ interface CropDetailProps {
   crop: CropResult
   onBack: () => void
 }
+
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 const CONDITION_LABELS: Record<string, string> = {
   chlorosis: '황화 현상',
@@ -49,7 +58,9 @@ export default function CropDetail({ crop, onBack }: CropDetailProps) {
   const [imageZoom, setImageZoom] = useState(false)
 
   const isAbnormal = crop.status === 'Abnormal'
-  const imgSrc = crop.imageUrl || crop.imageData
+  // 파이프라인 어노테이션 이미지는 이미 bbox가 그려져 있음 → 오버레이 생략
+  const isAnnotated = !!crop.annotationUrl
+  const imgSrc = crop.annotationUrl ? `${API_BASE}${crop.annotationUrl}` : (crop.imageUrl || crop.imageData)
 
   return (
     <div className="page" style={{ background: '#0f1724' }}>
@@ -91,8 +102,8 @@ export default function CropDetail({ crop, onBack }: CropDetailProps) {
                 onClick={() => setImageZoom(true)}
                 style={{ width: '100%', borderRadius: 8, cursor: 'pointer', display: 'block' }}
               />
-              {/* bbox 오버레이 */}
-              {crop.conditions?.map((cond, i) => {
+              {/* bbox 오버레이 (파이프라인 이미지는 이미 그려져 있으므로 생략) */}
+              {!isAnnotated && crop.conditions?.map((cond, i) => {
                 if (!cond.bbox || cond.type === 'normal') return null
                 const color = BBOX_COLORS[cond.type] || '#fff'
                 return (
@@ -130,10 +141,21 @@ export default function CropDetail({ crop, onBack }: CropDetailProps) {
             <ZoomIn size={12} /> 확대
           </button>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-          {crop.analyzed_at && <span style={{ fontSize: 11, color: '#6b7280' }}>촬영 시간: {crop.analyzed_at}</span>}
-          <span style={{ fontSize: 11, color: '#6b7280' }}>구역: {crop.zone}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, flexWrap: 'wrap', gap: 4 }}>
+          <span style={{ fontSize: 11, color: '#6b7280' }}>
+            촬영 시간: {crop.capturedAt || crop.analyzed_at || '-'}
+          </span>
+          <span style={{ fontSize: 11, color: '#6b7280' }}>
+            구역: {crop.zone}{crop.camera ? ` · ${crop.camera}` : ''}
+          </span>
         </div>
+        {(crop.runId || crop.pose) && (
+          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+            {crop.runId && <span>run: {crop.runId}</span>}
+            {crop.captureId && <span> · capture: {crop.captureId}</span>}
+            {crop.pose && <span> · pose: ({crop.pose.x.toFixed(2)}, {crop.pose.y.toFixed(2)})</span>}
+          </div>
+        )}
       </div>
 
       {/* 분석 결과 요약 */}

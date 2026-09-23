@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { Bell, Upload, AlertTriangle, ChevronRight } from 'lucide-react'
 import CropDetail from './CropDetail'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// VITE_API_URL이 비어 있으면 상대경로('') 사용 → Vite dev 프록시가 백엔드로 전달
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 type Filter = 'All' | 'Normal' | 'Abnormal' | 'Error'
 const zoneFilters = ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E']
@@ -10,11 +11,14 @@ const zoneFilters = ['Zone A', 'Zone B', 'Zone C', 'Zone D', 'Zone E']
 interface Condition {
   type: string
   confidence: number
-  severity: string
+  severity?: string
   description: string
+  bbox?: { x: number; y: number; w: number; h: number }
 }
 
 interface CropResult {
+  id?: number
+  source?: string
   zone: string
   status: string
   conditions: Condition[]
@@ -22,8 +26,21 @@ interface CropResult {
   recommendation?: string
   filename?: string
   analyzed_at?: string
-  imageUrl?: string
-  imageData?: string
+  annotationUrl?: string        // 파이프라인 어노테이션 이미지 (/api/annotations/{id})
+  camera?: string               // 'left' | 'right'
+  runId?: string
+  missionId?: string
+  captureId?: string
+  capturedAt?: string
+  pose?: { x: number; y: number; yaw: number; source?: string } | null
+  imageUrl?: string             // 업로드 미리보기 (레거시)
+  imageData?: string            // base64 (레거시)
+}
+
+// 이미지 소스 우선순위: 파이프라인 어노테이션 → 업로드 미리보기 → base64
+const cropImageSrc = (c: CropResult): string | undefined => {
+  if (c.annotationUrl) return `${API_BASE}${c.annotationUrl}`
+  return c.imageUrl || c.imageData
 }
 
 export default function Crops() {
@@ -184,10 +201,21 @@ export default function Crops() {
         {loading && <div style={{ padding: 20, textAlign: 'center', color: '#9ca3af' }}>로딩 중...</div>}
 
         {filtered.map((crop, i) => (
-          <div key={i} className="crop-card" onClick={() => crop.status !== 'Error' && setSelectedCrop(crop)} style={{ cursor: crop.status === 'Error' ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 12, background: '#1a2332', border: crop.status === 'Abnormal' ? '1px solid #dc2626' : crop.status === 'Error' ? '1px solid #f59e0b' : '1px solid #2a3a4a', marginBottom: 8 }}>
+          <div key={crop.id ?? i} className="crop-card" onClick={() => crop.status !== 'Error' && setSelectedCrop(crop)} style={{ cursor: crop.status === 'Error' ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 12, background: '#1a2332', border: crop.status === 'Abnormal' ? '1px solid #dc2626' : crop.status === 'Error' ? '1px solid #f59e0b' : '1px solid #2a3a4a', marginBottom: 8 }}>
             {/* 썸네일 */}
-            <div style={{ width: 60, height: 60, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#2a3a4a' }}>
-              {(crop.imageUrl || crop.imageData) && <img src={crop.imageUrl || crop.imageData} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+            <div style={{ width: 60, height: 60, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#2a3a4a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {cropImageSrc(crop) ? (
+                <img
+                  src={cropImageSrc(crop)}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={(e) => {
+                    console.error('썸네일 로드 실패:', cropImageSrc(crop))
+                    ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                  }}
+                />
+              ) : (
+                <span style={{ fontSize: 9, color: '#6b7280' }}>이미지</span>
+              )}
             </div>
             {/* 정보 */}
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -195,12 +223,15 @@ export default function Crops() {
                 {crop.status === 'Abnormal' && <AlertTriangle size={14} color="#ef4444" />}
                 {crop.status === 'Error' && <AlertTriangle size={14} color="#f59e0b" />}
                 <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>{crop.zone}</span>
+                {crop.camera && <span style={{ fontSize: 10, color: '#9ca3af', border: '1px solid #2a3a4a', borderRadius: 4, padding: '1px 5px' }}>{crop.camera}</span>}
               </div>
               <p style={{ fontSize: 12, color: crop.status === 'Normal' ? '#22c55e' : crop.status === 'Error' ? '#f59e0b' : '#ef4444', fontWeight: 600, margin: '2px 0' }}>
                 {crop.status === 'Normal' ? '정상' : crop.status === 'Error' ? '분석 실패' : '이상 감지'}
               </p>
               <p style={{ fontSize: 11, color: '#9ca3af', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {crop.overall}
+                {crop.overall || (crop.conditions?.length
+                  ? Array.from(new Set(crop.conditions.map((c) => c.type))).join(', ')
+                  : crop.filename || '')}
               </p>
               {crop.analyzed_at && <p style={{ fontSize: 10, color: '#6b7280', margin: '2px 0 0' }}>{crop.analyzed_at}</p>}
             </div>

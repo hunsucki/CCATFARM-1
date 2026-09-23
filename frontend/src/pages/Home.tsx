@@ -10,6 +10,16 @@ import { getZoneName, ZONES } from '../utils/zoneMap'
 
 declare const ROSLIB: typeof import('roslib')
 
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
+
+interface ZoneSummary {
+  zone: string
+  total: number
+  normal: number
+  abnormal: number
+  image_count: number
+}
+
 interface RobotState {
   zone: string
   x: number
@@ -30,6 +40,35 @@ export default function Home() {
     y: 0,
     isRunning: false,
   })
+  const [zoneSummary, setZoneSummary] = useState<ZoneSummary[]>([])
+
+  // zone별 집계 (총/정상/이상) 로드 — /api/zones/summary
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/zones/summary`)
+        const data = await res.json()
+        if (!cancelled) setZoneSummary(data.zones || [])
+      } catch (e) {
+        console.error('zone 집계 조회 실패:', e)
+      }
+    }
+    load()
+    const t = setInterval(load, 10000) // 10초마다 갱신
+    return () => { cancelled = true; clearInterval(t) }
+  }, [])
+
+  // 전체 합계
+  const totals = zoneSummary.reduce(
+    (acc, z) => {
+      acc.total += z.total
+      acc.normal += z.normal
+      acc.abnormal += z.abnormal
+      return acc
+    },
+    { total: 0, normal: 0, abnormal: 0 }
+  )
 
   // drive_manager의 통합 /robot_pose 구독 → Zone 판별
   useEffect(() => {
@@ -176,36 +215,62 @@ export default function Home() {
           </div>
           <div className="crop-health">
             <div className="donut-wrap">
-              <svg viewBox="0 0 80 80" width="80" height="80">
-                <circle cx="40" cy="40" r="30" fill="none" stroke="var(--border-light, #353b4f)" strokeWidth="10" />
-              </svg>
-              <div className="donut-label"><span className="donut-num">--</span><br />CROPS</div>
+              {(() => {
+                const R = 30
+                const C = 2 * Math.PI * R
+                const normalRatio = totals.total > 0 ? totals.normal / totals.total : 0
+                return (
+                  <svg viewBox="0 0 80 80" width="80" height="80">
+                    {/* 이상(빨강) 배경 트랙 */}
+                    <circle cx="40" cy="40" r={R} fill="none" stroke="#ef4444" strokeWidth="10" />
+                    {/* 정상(초록) 비율만큼 덮기 */}
+                    {totals.total > 0 && (
+                      <circle
+                        cx="40" cy="40" r={R} fill="none" stroke="#22c55e" strokeWidth="10"
+                        strokeDasharray={`${C * normalRatio} ${C}`}
+                        transform="rotate(-90 40 40)"
+                        strokeLinecap="round"
+                      />
+                    )}
+                  </svg>
+                )
+              })()}
+              <div className="donut-label">
+                <span className="donut-num">{totals.total > 0 ? totals.total : '--'}</span><br />CROPS
+              </div>
             </div>
             <div className="zone-list">
-              {(ZONES.length > 0 ? ZONES : [
-                { name: 'Zone A', color: '#22c55e' },
-                { name: 'Zone B', color: '#3b82f6' },
-                { name: 'Zone C', color: '#f59e0b' },
-                { name: 'Zone D', color: '#8b5cf6' },
-                { name: 'Zone E', color: '#ef4444' },
-                { name: 'Zone F', color: '#06b6d4' },
-              ]).map((z, i) => (
-                <div key={i} className="zone-row">
-                  <span className="zone-dot" style={{ background: z.color }} />
-                  <span className="zone-name" style={{
-                    fontWeight: robot.zone === z.name ? 700 : 400,
-                    color: robot.zone === z.name ? z.color : undefined,
-                  }}>
-                    {z.name} {robot.zone === z.name && '← 로봇'}
-                  </span>
-                  <ChevronRight size={12} />
-                </div>
-              ))}
+              {zoneSummary.length > 0 ? (
+                zoneSummary.map((z, i) => (
+                  <div key={i} className="zone-row">
+                    <span className="zone-dot" style={{ background: z.abnormal > 0 ? '#ef4444' : '#22c55e' }} />
+                    <span className="zone-name" style={{
+                      fontWeight: robot.zone === z.zone ? 700 : 400,
+                      color: robot.zone === z.zone ? '#3b82f6' : undefined,
+                    }}>
+                      {z.zone} · 정상 {z.normal} / 이상 {z.abnormal}
+                      {robot.zone === z.zone && ' ← 로봇'}
+                    </span>
+                    <ChevronRight size={12} />
+                  </div>
+                ))
+              ) : (
+                (ZONES.length > 0 ? ZONES : [
+                  { name: 'Zone A', color: '#22c55e' },
+                  { name: 'Zone B', color: '#3b82f6' },
+                ]).map((z, i) => (
+                  <div key={i} className="zone-row">
+                    <span className="zone-dot" style={{ background: z.color }} />
+                    <span className="zone-name">{z.name}</span>
+                    <ChevronRight size={12} />
+                  </div>
+                ))
+              )}
             </div>
           </div>
           <div className="legend">
-            <span className="legend-dot green" /> NORMAL
-            <span className="legend-dot red" style={{ marginLeft: 12 }} /> ABNORMAL
+            <span className="legend-dot green" /> NORMAL {totals.normal}
+            <span className="legend-dot red" style={{ marginLeft: 12 }} /> ABNORMAL {totals.abnormal}
           </div>
         </div>
 
